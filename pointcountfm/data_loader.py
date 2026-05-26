@@ -32,11 +32,13 @@ def load_data_file(
     end: int | None = None,
     load_noise: bool = False,
     num_classes: int = 0,
-) -> tuple[Tensor, Tensor, Tensor | None, Tensor | None, Tensor | None]:
+) -> tuple[Tensor, Tensor, Tensor | None, Tensor | None, Tensor | None, Tensor | None]:
     with h5py.File(data_file, "r") as file:
         energy_key = "energy" if "energy" in file else "energies"
         e_incident = load_dataset(file, energy_key, start, end)
         num_points = load_dataset(file, "num_points", start, end)
+        if "min_time_per_layer" in file:
+            mint = load_dataset(file, "min_time_per_layer", start, end)
         noise = load_dataset(file, "noise", start, end) if load_noise else None
         labels = load_dataset(file, "labels", start, end) if "labels" in file else None
         directions = (
@@ -55,6 +57,7 @@ def load_data_file(
     return (
         e_incident,
         num_points,
+        mint,
         noise,
         labels,
         directions,
@@ -67,18 +70,19 @@ def load_data_directory(
     end: int | None = None,
     load_noise: bool = False,
     num_classes: int = 0,
-) -> tuple[Tensor, Tensor, Tensor | None, Tensor | None, Tensor | None]:
+) -> tuple[Tensor, Tensor, Tensor | None, Tensor | None, Tensor | None, Tensor | None]:
     e_incident_list = []
     num_points_list = []
     noise_list = []
     labels_list = []
     directions_list = []
+    mint_list = []
 
     for i, file_name in enumerate(sorted(os.listdir(data_directory))):
         if not file_name.endswith(".h5"):
             continue
         file_path = os.path.join(data_directory, file_name)
-        e_incident, num_points, noise, labels, directions = load_data_file(
+        e_incident, num_points, mint, noise, labels, directions = load_data_file(
             file_path, start=start, end=end, load_noise=load_noise
         )
         if labels is not None and not torch.all(torch.argmax(labels, dim=1) == i):
@@ -88,12 +92,15 @@ def load_data_directory(
         e_incident_list.append(e_incident)
         num_points_list.append(num_points)
         noise_list.append(noise)
+        if mint is not None:
+            mint_list.append(mint)
         labels_list.append(torch.full((e_incident.shape[0],), i, dtype=torch.int64))
         if directions is not None:
             directions_list.append(directions)
 
     e_incident = torch.cat(e_incident_list, dim=0)
     num_points = torch.cat(num_points_list, dim=0)
+    mint = torch.cat(mint_list, dim=0) if mint_list else None
     noise = torch.cat(noise_list, dim=0) if load_noise else None
     labels = torch.cat(labels_list, dim=0)
     directions = torch.cat(directions_list, dim=0) if directions_list else None
@@ -101,6 +108,8 @@ def load_data_directory(
     permutation = torch.randperm(e_incident.shape[0])
     e_incident = e_incident[permutation]
     num_points = num_points[permutation]
+    if mint is not None:
+        mint = mint[permutation]
     if noise is not None:
         noise = noise[permutation]
     labels = labels[permutation]
@@ -113,6 +122,7 @@ def load_data_directory(
     return (
         e_incident,
         num_points,
+        mint,
         noise,
         labels,
         directions,
@@ -146,6 +156,7 @@ class DataLoader:
         data_file: str,
         transform_inc: Transformation | list | None = None,
         transform_num_points: Transformation | list | None = None,
+        transform_min_time: Transformation | list | None = None,
         batch_size: int = 1,
         shuffle: bool = False,
         start: int = 0,
@@ -158,10 +169,11 @@ class DataLoader:
         self.data_file = data_file
         self.transform_inc = self.__compose_trafo(transform_inc)
         self.transform_num_points = self.__compose_trafo(transform_num_points)
+        self.transform_min_time = self.__compose_trafo(transform_min_time)
         self.batch_size = batch_size
         self.shuffle = shuffle
 
-        e_incident, num_points, noise, labels, directions = load_data(
+        e_incident, num_points, mint, noise, labels, directions = load_data(
             data_file,
             start=start,
             end=end,
@@ -178,6 +190,8 @@ class DataLoader:
 
         e_incident = e_incident.to(device)
         num_points = num_points.to(device)
+        if mint is not None:
+            mint = mint.to(device)
         if noise is not None:
             noise = noise.to(device)
         if labels is not None:
@@ -188,11 +202,18 @@ class DataLoader:
         if fit_transform:
             e_incident = self.transform_inc.fit(e_incident)
             num_points = self.transform_num_points.fit(num_points)
+            if mint is not None:
+                mint = self.transform_min_time.fit(mint)
         else:
             e_incident = self.transform_inc(e_incident)
             num_points = self.transform_num_points(num_points)
+            if mint is not None:
+                mint = self.transform_min_time(mint)
 
-        self.data = num_points
+        if mint is not None:
+            self.data = torch.cat([num_points, mint], dim=-1)
+        else:
+            self.data = num_points
         if labels is not None and directions is not None:
             self.condition = torch.cat([e_incident, labels, directions], dim=-1)
         elif labels is not None:
@@ -242,6 +263,7 @@ def get_loaders(
     data_file: str,
     transform_inc: Transformation | list | None = None,
     transform_num_points: Transformation | list | None = None,
+    transform_min_time: Transformation | list | None = None,
     batch_size: int = 128,
     batch_size_val: int | None = None,
     device: torch.device | str = "cpu",

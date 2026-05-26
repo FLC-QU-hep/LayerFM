@@ -1,8 +1,11 @@
 name: PointCountFM
 
 data:
-  data_file: data/layer_level.h5
+  data_file: ../pion-clouds/files/npy_array/points_HGx9new/input_for_pcFM.h5
   transform_num_points:
+    - [Log, {alpha: 0.5}]
+    - [StandardScaler, {shape: [1, 78]}]
+  transform_min_time:
     - [Log, {alpha: 0.5}]
     - [StandardScaler, {shape: [1, 78]}]
   transform_inc:
@@ -10,12 +13,12 @@ data:
   batch_size: 1024
   batch_size_val: 4096
   num_val: 50000
-  num_classes: 12
+  num_classes: 0
 
 model:
   name: FullyConnected
-  dim_input: 78
-  dim_condition: 16
+  dim_input: 156 # (points =78 + min time = 78)
+  dim_condition: 5 # 3 directions + 1 energy
   dim_time: 6
   hidden_dims:
     - 128
