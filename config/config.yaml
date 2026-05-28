@@ -1,4 +1,4 @@
-name: PointCountFM
+name: PointCountFM_withTime
 
 data:
   data_file: ../pion-clouds/files/npy_array/points_HGx9new/input_for_pcFM.h5

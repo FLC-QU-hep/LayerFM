@@ -2,8 +2,10 @@ import argparse
 import time
 from collections.abc import Iterable
 
+import h5py
 import showerdata
 import torch
+import yaml
 
 
 def parse_args(args: list[str] | None = None):
@@ -68,11 +70,18 @@ def main():
             self.model = model
 
         def forward(self, conditions: torch.Tensor) -> torch.Tensor:
-            results = []
+            results_points, results_time = [], []
             for i in range(conditions.size(0)):
                 result = self.model(conditions[[i]])
-                results.append(result)
-            return torch.cat(results, dim=0)
+                results_points.append(result[0])
+                results_time.append(result[1])
+
+            results_points = torch.cat(results_points, dim=0)
+            results_time = torch.cat(results_time, dim=0)
+            return torch.cat(
+                [results_points, results_time],
+                dim=-1,
+            )
 
     inference = InferenceModel(model)
     inference = inference.to(torch.float32)
@@ -88,7 +97,7 @@ def main():
             torch.nn.functional.one_hot(
                 torch.tensor([0]), num_classes=len(args.pdg_codes)
             ).to(torch.float32),
-            torch.tensor([[0.0, 0.0, 1.0]]),
+            torch.tensor([[0.0, 1.0, 0.0]]),
         ),
         dim=1,
     )
@@ -98,19 +107,41 @@ def main():
 
     print("Loading conditioning data...")
     start = time.time()
-    input_len = showerdata.get_file_length(args.input_file)
-    cond_data = showerdata.load_inc_particles(args.input_file, start=input_len - 50000)
-    conditions = torch.concatenate(
-        (
-            torch.from_numpy(cond_data.energies).to(torch.float32),
-            torch.nn.functional.one_hot(
-                to_labels(torch.from_numpy(cond_data.pdg), args.pdg_codes),
-                num_classes=len(args.pdg_codes),
-            ).to(torch.float32),
-            torch.from_numpy(cond_data.directions).to(torch.float32),
-        ),
-        dim=1,
-    )
+    f = h5py.File(args.input_file, "r")
+    if "energies" in f:
+        input_len = showerdata.get_file_length(args.input_file)
+        cond_data = showerdata.load_inc_particles(
+            args.input_file, start=input_len - 50000
+        )
+        conditions = torch.concatenate(
+            (
+                torch.from_numpy(cond_data.energies).to(torch.float32),
+                torch.nn.functional.one_hot(
+                    to_labels(torch.from_numpy(cond_data.pdg), args.pdg_codes),
+                    num_classes=len(args.pdg_codes),
+                ).to(torch.float32),
+                torch.from_numpy(cond_data.directions).to(torch.float32),
+            ),
+            dim=1,
+        )
+    else:
+        with open("config/config.yaml") as file:
+            config = yaml.safe_load(file)
+        num_showers = f[list(f.keys())[0]].shape[0]
+        cond_data = h5py.File(config["data"]["data_file"], "r")
+        conditions = torch.concatenate(
+            (
+                torch.from_numpy(cond_data["energies"][:num_showers]).to(torch.float32),
+                torch.from_numpy(cond_data["labels"][:num_showers])
+                .unsqueeze(-1)
+                .to(torch.float32),
+                torch.from_numpy(cond_data["directions"][:num_showers]).to(
+                    torch.float32
+                ),
+            ),
+            dim=-1,
+        )
+
     print(f"Conditioning data loaded in {(time.time() - start) * 1000.0:.1f}ms")
 
     print("Running inference...")
@@ -125,15 +156,33 @@ def main():
     results = (torch.clamp(results, min=0.0) + 0.5).to(torch.int32)
     start = time.time()
     output_file = args.output if args.output else args.input_file
-    if output_file != args.input_file:
-        showerdata.save(cond_data, output_file, overwrite=args.overwrite)
-    showerdata.observables.save_observables_to_file(
-        output_file,
-        {
+    if "energies" in f:
+        if output_file != args.input_file:
+            showerdata.save(cond_data, output_file, overwrite=args.overwrite)
+        showerdata.observables.save_observables_to_file(
+            output_file,
+            {
+                "num_points_per_layer": results.numpy(),
+            },
+            overwrite=args.overwrite,
+        )
+    else:
+        dict_to_save = {
             "num_points_per_layer": results.numpy(),
-        },
-        overwrite=args.overwrite,
-    )
+            "energies": cond_data["energies"][:num_showers],
+            "labels": cond_data["labels"][:num_showers],
+            "directions": cond_data["directions"][:num_showers],
+        }
+        with h5py.File(output_file, "a" if not args.overwrite else "w") as f_out:
+            if "num_points_per_layer" in f_out and not args.overwrite:
+                raise ValueError(
+                    "Dataset 'num_points_per_layer' already exists in the output file. Use --overwrite to overwrite it."
+                )
+            for key, values in dict_to_save.items():
+                f_out.create_dataset(
+                    key,
+                    data=values,
+                )
     print(f"Results saved in {(time.time() - start) * 1000.0:.1f}ms")
 
 

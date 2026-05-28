@@ -56,6 +56,15 @@ class CNF(nn.Module):
         return 2 * self.acceleration * t - self.acceleration + 1
 
     def loss(self, x: Tensor, condition: Tensor, noise: Tensor | None = None) -> Tensor:
+        if x.shape[-1] > 78:
+            mask = torch.cat(
+                [torch.ones_like(x[:, :78]), (x[:, :78] > 0).float()], dim=1
+            )
+            x = x.clone()
+            x[:, 78:] = torch.nan_to_num(
+                x[:, 78:], nan=0.0
+            )  # safe fill, masked out in loss
+
         t = torch.rand(
             [x.shape[0]] + [1] * (x.dim() - 1), device=x.device, dtype=x.dtype
         )
@@ -65,7 +74,9 @@ class CNF(nn.Module):
         u = (1 - 1e-4) * z - x
         u = self.time_derivative(t) * u
 
-        return (self(t.reshape(-1, 1), y, condition) - u).square()
+        pred = self(t.reshape(-1, 1), y, condition)
+        loss = ((pred - u) ** 2 * mask).sum() / mask.sum()
+        return loss
 
     def sample(self, shape: tuple[int, int], steps: int, condition: Tensor) -> Tensor:
         z = torch.randn(

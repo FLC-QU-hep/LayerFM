@@ -374,9 +374,18 @@ class Trainer:
             samples, noise = model.sample_return_z(
                 (condition.shape[0], self.dim_data), num_steps, condition
             )
-            samples_t = self.val_loader.transform_num_points.inverse(samples)
+            samples_t_points = self.val_loader.transform_num_points.inverse(
+                samples[:, :78]
+            )
+            samples_t_time = (
+                self.val_loader.transform_min_time.inverse(samples[:, 78:156])
+                if samples.shape[1] > 78
+                else None
+            )
+
         return (
-            samples_t.to(input_device),
+            samples_t_points.to(input_device),
+            samples_t_time.to(input_device),
             noise.to(input_device),
             samples.to(input_device),
             condition.to(input_device),
@@ -402,15 +411,17 @@ class Trainer:
             sys.stdout.flush()
         time_start = time.time()
         cond_batches = torch.split(condition, batch_size)
-        samples = []
+        samples_points = []
+        samples_time = []
         noise = []
         samples_raw = []
         cond_t = []
         for cond_batch in cond_batches:
-            samples_l, noise_l, samples_raw_l, cond_t_l = self.sample(
-                cond_batch, num_steps, distilled
+            samples_l_points, samples_l_time, noise_l, samples_raw_l, cond_t_l = (
+                self.sample(cond_batch, num_steps, distilled)
             )
-            samples.append(samples_l)
+            samples_points.append(samples_l_points)
+            samples_time.append(samples_l_time)
             noise.append(noise_l)
             samples_raw.append(samples_raw_l)
             cond_t.append(cond_t_l)
@@ -423,7 +434,8 @@ class Trainer:
             print()
             sys.stdout.flush()
         return (
-            torch.cat(samples, dim=0),
+            torch.cat(samples_points, dim=0),
+            torch.cat(samples_time, dim=0) if samples_time[0] is not None else None,
             torch.cat(noise, dim=0),
             torch.cat(samples_raw, dim=0),
             torch.cat(cond_t, dim=0),
@@ -438,7 +450,7 @@ class Trainer:
         num_steps: int = 0,
         distilled: bool = False,
     ) -> None:
-        samples, noise, samples_raw, cond_t = self.sample_batch(
+        samples_points, samples_time, noise, samples_raw, cond_t = self.sample_batch(
             condition,
             batch_size,
             verbose=verbose,
@@ -458,7 +470,8 @@ class Trainer:
         )
         with h5py.File(file_path, "w") as file:
             file.create_dataset("energy", data=energy.numpy())
-            file.create_dataset("num_points", data=samples.numpy())
+            file.create_dataset("num_points", data=samples_points.numpy())
+            file.create_dataset("min_time", data=samples_time.numpy())
             if labels is not None:
                 file.create_dataset("labels", data=labels.numpy())
             if directions is not None:
@@ -500,6 +513,7 @@ class Trainer:
                 model: flow_matching.CNF,
                 transform_inc: Transformation,
                 transform_num_points: Transformation,
+                transform_min_time: Transformation,
                 dim_data: int,
                 steps: int,
             ) -> None:
@@ -507,8 +521,10 @@ class Trainer:
                 self.model = model
                 self.transform_inc = transform_inc
                 self.transform_num_points = transform_num_points
+                self.transform_min_time = transform_min_time
                 self.dim_data = dim_data
                 self.steps = steps
+                self.use_time = transform_min_time is not None
 
             def forward(self, condition: torch.Tensor) -> torch.Tensor:
                 condition = torch.clone(condition)
@@ -516,13 +532,19 @@ class Trainer:
                 samples = self.model.sample(
                     (condition.shape[0], self.dim_data), self.steps, condition=condition
                 )
-                samples = self.transform_num_points.inverse(samples)
-                return samples
+                samples_points = self.transform_num_points.inverse(samples[:, :78])
+                samples_time = (
+                    self.transform_min_time.inverse(samples[:, 78:156])
+                    if self.use_time
+                    else None
+                )
+                return [samples_points, samples_time]
 
         sampler = Sampler(
             model=self.model,
             transform_inc=self.val_loader.transform_inc,
             transform_num_points=self.val_loader.transform_num_points,
+            transform_min_time=self.val_loader.transform_min_time,
             dim_data=self.dim_data,
             steps=self.steps,
         )
