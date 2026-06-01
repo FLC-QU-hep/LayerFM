@@ -14,10 +14,11 @@ data:
   batch_size_val: 4096
   num_val: 50000
   num_classes: 0
+  num_layers: 78
 
 model:
   name: FullyConnected
-  dim_input: 156 # (points =78 + min time = 78)
+  dim_input: 156 # [points, min_time, energy]
   dim_condition: 5 # 3 directions + 1 energy
   dim_time: 6
   hidden_dims:

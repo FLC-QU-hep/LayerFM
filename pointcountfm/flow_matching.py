@@ -55,14 +55,27 @@ class CNF(nn.Module):
     def time_derivative(self, t: Tensor) -> Tensor:
         return 2 * self.acceleration * t - self.acceleration + 1
 
-    def loss(self, x: Tensor, condition: Tensor, noise: Tensor | None = None) -> Tensor:
-        if x.shape[-1] > 78:
-            mask = torch.cat(
-                [torch.ones_like(x[:, :78]), (x[:, :78] > 0).float()], dim=1
-            )
+    def loss(
+        self,
+        x: Tensor,
+        condition: Tensor,
+        noise: Tensor | None = None,
+        num_layers: int = 78,
+    ) -> Tensor:
+        if x.shape[-1] > num_layers:
+            parts = [
+                torch.ones_like(x[:, :num_layers]),
+                (x[:, :num_layers] > 0).float(),
+            ]
+
+            if x.shape[-1] > 2 * num_layers:
+                parts.append((x[:, :num_layers] > 0).float())
+
+            mask = torch.cat(parts, dim=1)
+
             x = x.clone()
-            x[:, 78:] = torch.nan_to_num(
-                x[:, 78:], nan=0.0
+            x[:, num_layers:] = torch.nan_to_num(
+                x[:, num_layers:], nan=0.0
             )  # safe fill, masked out in loss
 
         t = torch.rand(

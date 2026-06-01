@@ -249,7 +249,9 @@ class Trainer:
                 x = batch["data"]
                 condition = batch["condition"]
                 noise = batch["noise"]
-                losses = self.model.loss(x, condition, noise)
+                losses = self.model.loss(
+                    x, condition, noise, num_layers=self.data_config["num_layers"]
+                )
                 loss = torch.mean(losses)
                 loss.backward()
                 self.optimizer.step()
@@ -375,17 +377,37 @@ class Trainer:
                 (condition.shape[0], self.dim_data), num_steps, condition
             )
             samples_t_points = self.val_loader.transform_num_points.inverse(
-                samples[:, :78]
+                samples[:, : self.data_config["num_layers"]]
             )
             samples_t_time = (
-                self.val_loader.transform_min_time.inverse(samples[:, 78:156])
-                if samples.shape[1] > 78
+                self.val_loader.transform_min_time.inverse(
+                    samples[
+                        :,
+                        self.data_config["num_layers"] : int(
+                            self.data_config["num_layers"] * 2
+                        ),
+                    ]
+                )
+                if samples.shape[1] > self.data_config["num_layers"]
+                else None
+            )
+            samples_en_perl = (
+                self.val_loader.transform_en_perl.inverse(
+                    samples[
+                        :,
+                        int(self.data_config["num_layers"] * 2) : int(
+                            self.data_config["num_layers"] * 3
+                        ),
+                    ]
+                )
+                if samples.shape[1] > int(2 * self.data_config["num_layers"])
                 else None
             )
 
         return (
             samples_t_points.to(input_device),
-            samples_t_time.to(input_device),
+            samples_t_time.to(input_device) if samples_t_time is not None else None,
+            samples_en_perl.to(input_device) if samples_en_perl is not None else None,
             noise.to(input_device),
             samples.to(input_device),
             condition.to(input_device),
@@ -413,15 +435,22 @@ class Trainer:
         cond_batches = torch.split(condition, batch_size)
         samples_points = []
         samples_time = []
+        samples_en = []
         noise = []
         samples_raw = []
         cond_t = []
         for cond_batch in cond_batches:
-            samples_l_points, samples_l_time, noise_l, samples_raw_l, cond_t_l = (
-                self.sample(cond_batch, num_steps, distilled)
-            )
+            (
+                samples_l_points,
+                samples_l_time,
+                samples_en_perl,
+                noise_l,
+                samples_raw_l,
+                cond_t_l,
+            ) = self.sample(cond_batch, num_steps, distilled)
             samples_points.append(samples_l_points)
             samples_time.append(samples_l_time)
+            samples_en.append(samples_en_perl)
             noise.append(noise_l)
             samples_raw.append(samples_raw_l)
             cond_t.append(cond_t_l)
@@ -436,6 +465,7 @@ class Trainer:
         return (
             torch.cat(samples_points, dim=0),
             torch.cat(samples_time, dim=0) if samples_time[0] is not None else None,
+            torch.cat(samples_en, dim=0) if samples_en[0] is not None else None,
             torch.cat(noise, dim=0),
             torch.cat(samples_raw, dim=0),
             torch.cat(cond_t, dim=0),
@@ -450,12 +480,14 @@ class Trainer:
         num_steps: int = 0,
         distilled: bool = False,
     ) -> None:
-        samples_points, samples_time, noise, samples_raw, cond_t = self.sample_batch(
-            condition,
-            batch_size,
-            verbose=verbose,
-            num_steps=num_steps,
-            distilled=distilled,
+        samples_points, samples_time, samples_en, noise, samples_raw, cond_t = (
+            self.sample_batch(
+                condition,
+                batch_size,
+                verbose=verbose,
+                num_steps=num_steps,
+                distilled=distilled,
+            )
         )
         energy = condition[:, 0:1]
         if self.train_loader.num_classes == 0:
@@ -471,7 +503,10 @@ class Trainer:
         with h5py.File(file_path, "w") as file:
             file.create_dataset("energy", data=energy.numpy())
             file.create_dataset("num_points", data=samples_points.numpy())
-            file.create_dataset("min_time", data=samples_time.numpy())
+            if samples_time is not None:
+                file.create_dataset("min_time", data=samples_time.numpy())
+            if samples_en is not None:
+                file.create_dataset("energy_per_layer", data=samples_en.numpy())
             if labels is not None:
                 file.create_dataset("labels", data=labels.numpy())
             if directions is not None:
@@ -514,6 +549,7 @@ class Trainer:
                 transform_inc: Transformation,
                 transform_num_points: Transformation,
                 transform_min_time: Transformation,
+                transfrom_en_perl: Transformation,
                 dim_data: int,
                 steps: int,
             ) -> None:
@@ -522,9 +558,11 @@ class Trainer:
                 self.transform_inc = transform_inc
                 self.transform_num_points = transform_num_points
                 self.transform_min_time = transform_min_time
+                self.transform_en_perl = transfrom_en_perl
                 self.dim_data = dim_data
                 self.steps = steps
                 self.use_time = transform_min_time is not None
+                self.use_enperl = transfrom_en_perl is not None
 
             def forward(self, condition: torch.Tensor) -> torch.Tensor:
                 condition = torch.clone(condition)
@@ -533,18 +571,25 @@ class Trainer:
                     (condition.shape[0], self.dim_data), self.steps, condition=condition
                 )
                 samples_points = self.transform_num_points.inverse(samples[:, :78])
+                samples_time, samples_en_perl = None, None
                 samples_time = (
                     self.transform_min_time.inverse(samples[:, 78:156])
                     if self.use_time
                     else None
                 )
-                return [samples_points, samples_time]
+                samples_en_perl = (
+                    self.transform_en_perl.inverse(samples[:, 156:234])
+                    if self.use_enperl
+                    else None
+                )
+                return [samples_points, samples_time, samples_en_perl]
 
         sampler = Sampler(
             model=self.model,
             transform_inc=self.val_loader.transform_inc,
             transform_num_points=self.val_loader.transform_num_points,
             transform_min_time=self.val_loader.transform_min_time,
+            transfrom_en_perl=self.val_loader.transform_en_perl,
             dim_data=self.dim_data,
             steps=self.steps,
         )

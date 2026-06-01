@@ -58,6 +58,7 @@ def main():
     print("Loading model...")
     start = time.time()
     model = torch.jit.load(args.model)
+    print(model)
     model.eval()
     print(f"Model loaded in {(time.time() - start) * 1000.0:.1f}ms")
 
@@ -69,19 +70,29 @@ def main():
             super().__init__()
             self.model = model
 
+        def _check_hallucinations(
+            self, result: torch.Tensor, condition: torch.Tensor
+        ) -> torch.Tensor:
+            while result[:, :78].max() > 1e4 or result[:, :78].min() < -1e4:
+                print("re-sampling...")
+                raw = self.model(condition)
+                list_ = []
+                for j in range(len(raw)):
+                    list_.append(raw[j])
+                result = torch.cat(list_, dim=-1)
+            return result
+
         def forward(self, conditions: torch.Tensor) -> torch.Tensor:
-            results_points, results_time = [], []
+            results = []
             for i in range(conditions.size(0)):
                 result = self.model(conditions[[i]])
-                results_points.append(result[0])
-                results_time.append(result[1])
+                list_ = []
+                for j in range(len(result)):
+                    list_.append(result[j])
+                results.append(torch.cat(list_, dim=-1))
+                results[-1] = self._check_hallucinations(results[-1], conditions[[i]])
 
-            results_points = torch.cat(results_points, dim=0)
-            results_time = torch.cat(results_time, dim=0)
-            return torch.cat(
-                [results_points, results_time],
-                dim=-1,
-            )
+            return torch.cat(results, dim=0)
 
     inference = InferenceModel(model)
     inference = inference.to(torch.float32)
@@ -101,6 +112,7 @@ def main():
         ),
         dim=1,
     )
+    print(example_conditions.shape)
     inference(example_conditions)
     inference(example_conditions)
     print(f"Warmup done in {(time.time() - start) * 1000.0:.1f}ms")
@@ -143,7 +155,6 @@ def main():
         )
 
     print(f"Conditioning data loaded in {(time.time() - start) * 1000.0:.1f}ms")
-
     print("Running inference...")
     start = time.time()
     results = inference(conditions)
@@ -153,7 +164,12 @@ def main():
     )
 
     print("Saving results...")
-    results = (torch.clamp(results, min=0.0) + 0.5).to(torch.int32)
+    results = torch.clamp(results, min=0.0)
+    results_points = (results[:, :78] + 0.5).to(torch.int32)
+    results_time = results[:, 78:].to(torch.float32)
+    results_time = torch.clamp(results_time, max=200.0)
+    results_time[results_points == 0] = 0.0
+    results_energy = results[:, int(78 * 2) :].to(torch.float32)
     start = time.time()
     output_file = args.output if args.output else args.input_file
     if "energies" in f:
@@ -162,13 +178,17 @@ def main():
         showerdata.observables.save_observables_to_file(
             output_file,
             {
-                "num_points_per_layer": results.numpy(),
+                "num_points_per_layer": results_points.numpy(),
+                "min_time_per_layer": results_time.numpy(),
+                "energy_per_layer": results_energy.numpy(),
             },
             overwrite=args.overwrite,
         )
     else:
         dict_to_save = {
-            "num_points_per_layer": results.numpy(),
+            "num_points_per_layer": results_points.numpy(),
+            "min_time_per_layer": results_time.numpy(),
+            "energy_per_layer": results_energy.numpy(),
             "energies": cond_data["energies"][:num_showers],
             "labels": cond_data["labels"][:num_showers],
             "directions": cond_data["directions"][:num_showers],

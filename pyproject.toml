@@ -24,6 +24,7 @@ dependencies = [
     "PyYAML>=6.0,<6.1",
     "torch>=2.8,<2.9",
     "showerdata>=0.6,<0.7",
+    "scipy>=1.17.1",
 ]
 
 [dependency-groups]
