@@ -87,6 +87,8 @@ def main():
             for i in range(conditions.size(0)):
                 result = self.model(conditions[[i]])
                 list_ = []
+                if result[-1].shape[1] != 78:
+                    result = result[:-1]
                 for j in range(len(result)):
                     list_.append(result[j])
                 results.append(torch.cat(list_, dim=-1))
@@ -112,7 +114,7 @@ def main():
         ),
         dim=1,
     )
-    print(example_conditions.shape)
+
     inference(example_conditions)
     inference(example_conditions)
     print(f"Warmup done in {(time.time() - start) * 1000.0:.1f}ms")
@@ -164,14 +166,19 @@ def main():
     )
 
     print("Saving results...")
+    print(results.shape)
+    layers = 78
     results = torch.clamp(results, min=0.0)
-    results_points = (results[:, :78] + 0.5).to(torch.int32)
-    results_time = results[:, 78:].to(torch.float32)
-    results_time = torch.clamp(results_time, max=200.0)
-    results_time[results_points == 0] = 0.0
-    results_energy = results[:, int(78 * 2) :].to(torch.float32)
+    results_points = (results[:, :layers] + 0.5).to(torch.int32)
+    if results.shape[1] > layers:
+        results_time = results[:, layers : int(layers * 2)].to(torch.float32)
+        results_time = torch.clamp(results_time, max=200.0)
+        results_time[results_points == 0] = 0.0
+    if results.shape[1] > (layers * 2):
+        results_energy = results[:, int(layers * 2) :].to(torch.float32)
     start = time.time()
     output_file = args.output if args.output else args.input_file
+
     if "energies" in f:
         if output_file != args.input_file:
             showerdata.save(cond_data, output_file, overwrite=args.overwrite)
@@ -179,16 +186,24 @@ def main():
             output_file,
             {
                 "num_points_per_layer": results_points.numpy(),
-                "min_time_per_layer": results_time.numpy(),
-                "energy_per_layer": results_energy.numpy(),
+                "min_time_per_layer": results_time.numpy()
+                if results.shape[1] > layers
+                else None,
+                "energy_per_layer": results_energy.numpy()
+                if results.shape[1] > layers * 2
+                else None,
             },
             overwrite=args.overwrite,
         )
     else:
         dict_to_save = {
             "num_points_per_layer": results_points.numpy(),
-            "min_time_per_layer": results_time.numpy(),
-            "energy_per_layer": results_energy.numpy(),
+            "min_time_per_layer": results_time.numpy()
+            if results.shape[1] > layers
+            else None,
+            "energy_per_layer": results_energy.numpy()
+            if results.shape[1] > layers * 2
+            else None,
             "energies": cond_data["energies"][:num_showers],
             "labels": cond_data["labels"][:num_showers],
             "directions": cond_data["directions"][:num_showers],
@@ -199,10 +214,11 @@ def main():
                     "Dataset 'num_points_per_layer' already exists in the output file. Use --overwrite to overwrite it."
                 )
             for key, values in dict_to_save.items():
-                f_out.create_dataset(
-                    key,
-                    data=values,
-                )
+                if values is not None:
+                    f_out.create_dataset(
+                        key,
+                        data=values,
+                    )
     print(f"Results saved in {(time.time() - start) * 1000.0:.1f}ms")
 
 

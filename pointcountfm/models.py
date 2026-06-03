@@ -14,15 +14,43 @@ class FullyConnected(nn.Module):
         dim_condition: int = 0,
         dim_time: int = 0,
         hidden_dims: list[int] | None = None,
-        activation: type[nn.Module] = nn.ReLU,
+        activation: type[nn.Module] = nn.SiLU,
     ) -> None:
         super().__init__()
+
         if hidden_dims is None:
             hidden_dims = [64, 64]
+
+        self.points_embedding = nn.Sequential(
+            nn.Linear(78, 128),
+            activation(),
+            nn.Linear(128, 128),
+            activation(),
+        )
+        dim_input = 128
+        if dim_input > 78:
+            self.time_embedding = nn.Sequential(
+                nn.Linear(78, 128),
+                activation(),
+                nn.Linear(128, 128),
+                activation(),
+            )
+            dim_input += 128
+            if dim_input > 156:
+                self.energy_embedding = nn.Sequential(
+                    nn.Linear(78, 128),
+                    activation(),
+                    nn.Linear(128, 128),
+                    activation(),
+                )
+                dim_input += 128
+
+        self.dim_input = dim_input
         layers = []
         prev_dim = dim_input + dim_condition + dim_time
         for dim in hidden_dims:
             layers.append(nn.Linear(prev_dim, dim))
+            layers.append(nn.LayerNorm(dim))  # only change from the original code
             layers.append(activation())
             prev_dim = dim
         layers.append(nn.Linear(prev_dim, dim_input))
@@ -34,6 +62,14 @@ class FullyConnected(nn.Module):
         x: torch.Tensor,
         condition: torch.Tensor | None = None,
     ) -> torch.Tensor:
+        x_emb = self.points_embedding(x[:, :78])
+        if x.shape[1] > 78:
+            time_emb = self.time_embedding(x[:, 78:156])
+            x_emb = torch.cat([x_emb, time_emb], dim=-1)
+            if x.shape[1] > 156:
+                energy_emb = self.energy_embedding(x[:, 156:])
+                x_emb = torch.cat([x_emb, energy_emb], dim=-1)
+
         input = [t, x]
         if condition is not None:
             input.append(condition)

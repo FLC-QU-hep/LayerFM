@@ -1,4 +1,4 @@
-name: LayerFM_points_and_time
+name: LayerFM_PandT_multiLoss_embeddings
 
 data:
   data_file: ../pion-clouds/files/npy_array/points_HGx9new/input_for_pcFM.h5
@@ -6,7 +6,7 @@ data:
     - [Log, {alpha: 0.5}]
     - [StandardScaler, {shape: [1, 78]}]
   transform_min_time:
-    - [Log, {alpha: 0.5}]
+    - [Log, {alpha: 0.1}]
     - [StandardScaler, {shape: [1, 78]}]
   transform_en_perl:
     - [Log, {alpha: 0.5}]

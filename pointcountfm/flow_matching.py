@@ -22,6 +22,9 @@ class CNF(nn.Module):
         self.frequencies = nn.Buffer(
             torch.arange(1, frequencies + 1).reshape(1, -1) * torch.pi
         )
+        self.multi_loss = MultiTaskLoss(
+            time_exists=network.dim_input > 78, energy_exists=network.dim_input > 156
+        )
 
     def forward(self, t: Tensor, x: Tensor, condition: Tensor) -> Tensor:
         t = self.time_trafo(t)
@@ -62,21 +65,8 @@ class CNF(nn.Module):
         noise: Tensor | None = None,
         num_layers: int = 78,
     ) -> Tensor:
-        if x.shape[-1] > num_layers:
-            parts = [
-                torch.ones_like(x[:, :num_layers]),
-                (x[:, :num_layers] > 0).float(),
-            ]
-
-            if x.shape[-1] > 2 * num_layers:
-                parts.append((x[:, :num_layers] > 0).float())
-
-            mask = torch.cat(parts, dim=1)
-
-            x = x.clone()
-            x[:, num_layers:] = torch.nan_to_num(
-                x[:, num_layers:], nan=0.0
-            )  # safe fill, masked out in loss
+        # replace nan with 0 and inf with 1e4 to avoid hallucinations
+        x = torch.where(x.isnan(), torch.zeros_like(x), x)
 
         t = torch.rand(
             [x.shape[0]] + [1] * (x.dim() - 1), device=x.device, dtype=x.dtype
@@ -88,7 +78,9 @@ class CNF(nn.Module):
         u = self.time_derivative(t) * u
 
         pred = self(t.reshape(-1, 1), y, condition)
-        loss = ((pred - u) ** 2 * mask).sum() / mask.sum()
+        residual = (pred - u) ** 2
+        loss = self.multi_loss(residual, num_layers)
+
         return loss
 
     def sample(self, shape: tuple[int, int], steps: int, condition: Tensor) -> Tensor:
@@ -127,6 +119,47 @@ class CNF(nn.Module):
     def __repr__(self) -> str:
         network = self.network.__repr__().replace("\n", "\n  ")
         return f"{self.__class__.__name__}(\n  (network): {network}\n  frequencies/pi={(self.frequencies[0] / torch.pi).tolist()},\n  acceleration={self.acceleration}\n)"
+
+
+class MultiTaskLoss(nn.Module):
+    def __init__(self, time_exists: bool = False, energy_exists: bool = False) -> None:
+        super().__init__()
+        # log(sigma^2) for each task - initialized to 0 (sigma=1)
+        self.log_var_points = nn.Parameter(torch.zeros(1))
+        self.log_var_time = nn.Parameter(torch.zeros(1)) if time_exists else None
+        self.log_var_energy = nn.Parameter(torch.zeros(1)) if energy_exists else None
+
+    def forward(self, residual: Tensor, num_layers: int) -> Tensor:
+        # precision = 1 / sigma^2 = exp(-log_var)
+        loss_points = residual[:, :num_layers].mean()
+        loss_time = (
+            residual[:, num_layers : 2 * num_layers].mean()
+            if self.log_var_time is not None
+            else 0.0
+        )
+        loss_energy = (
+            residual[:, 2 * num_layers :].mean()
+            if self.log_var_energy is not None
+            else 0.0
+        )
+
+        precision_points = torch.exp(-self.log_var_points)
+        precision_time = (
+            torch.exp(-self.log_var_time) if self.log_var_time is not None else 0.0
+        )
+        precision_energy = (
+            torch.exp(-self.log_var_energy) if self.log_var_energy is not None else 0.0
+        )
+
+        loss = precision_points * loss_points + self.log_var_points
+
+        if self.log_var_time is not None:
+            loss = loss + precision_time * loss_time + self.log_var_time
+
+        if self.log_var_energy is not None:
+            loss = loss + precision_energy * loss_energy + self.log_var_energy
+
+        return loss
 
 
 class Distilled(nn.Module):

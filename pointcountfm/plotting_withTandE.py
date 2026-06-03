@@ -7,12 +7,80 @@ import numpy as np
 import yaml
 from scipy.stats import binned_statistic
 
+# run this code: python pointcountfm/plotting_withTandE.py results/20260603_141325_LayerFM_PandT_multiLoss
+
 parser = argparse.ArgumentParser()
 parser.add_argument("path", type=str, help="Path to the result folder.")
 params = parser.parse_args()
 path = params.path
+path = path if path.endswith("/") else path + "/"
 
-name = "output_pcFM.h5"
+name = "output_FM.h5"
+
+# generation
+# subprocess.run(
+#     [
+#         "python",
+#         "pointcountfm/inference_cond_file.py",
+#         f"{path}compiled.pt",
+#         "../pion-clouds/dataset/hdf5_HGx9new/all_interactions_pions_regular_ECAL+HCAL_10-90GeV_10.slcio.root_with_time.hdf5",
+#         "-o",
+#         f"{path}{name}",
+#         "--pdg-codes",
+#         "211",
+#     ]
+# )
+
+
+def plot_num_points_multi_energy(
+    gen_flat_points,
+    gen_E0,
+    g4_flat_points,
+    geant4_energies,
+    path,
+    name,
+    energies=[20, 50, 80],
+):
+    colors = ["royalblue", "purple", "crimson"]
+    energy_configs = [(e, 0.5) for e in energies]  # (center, half-window)
+
+    plt.figure(figsize=(8, 6))
+    bins = np.linspace(g4_flat_points.min(), g4_flat_points.max(), 50)
+    for (energy, half_window), color in zip(energy_configs, colors):
+        mask_gen = (gen_E0 >= energy - half_window) & (gen_E0 <= energy + half_window)
+        mask_g4 = (geant4_energies >= energy - half_window) & (
+            geant4_energies <= energy + half_window
+        )
+
+        gen_pts = gen_flat_points[mask_gen]
+        g4_pts = g4_flat_points[mask_g4]
+
+        plt.hist(
+            g4_pts,
+            bins=bins,
+            density=True,
+            color=color,
+            alpha=0.3,
+            label=f"Geant4 {energy} GeV",
+        )
+        plt.hist(
+            gen_pts,
+            bins=bins,
+            density=True,
+            histtype="step",
+            linewidth=2,
+            color=color,
+            label=f"Generated {energy} GeV",
+        )
+
+    plt.title("Total Num Points at 20, 50 & 80 GeV")
+    plt.xlabel("Total Num Points")
+    plt.ylabel("Density")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(path + "plots/{}_multi_energy.png".format(name.split(".")[0]))
+    plt.close()
+
 
 confg_path = path + "conf.yaml"
 with open(confg_path) as file:
@@ -107,12 +175,28 @@ plt.tight_layout()
 plt.savefig(path + "plots/{}.png".format(name.split(".")[0]))
 plt.close()
 
+plot_num_points_multi_energy(
+    gen_flat_points,
+    gen_E0,
+    g4_flat_points,
+    geant4_energies,
+    path,
+    name,
+    energies=[20, 50, 80],
+)
+
 # ── Min time per layer ────────────────────────────────────────────────────────
 if "min_time_per_layer" in geant4_pl and "min_time_per_layer" in generated_pl:
     plt.figure(figsize=(6, 5))
+    value_ = 0.01
+    # bins_log = np.logspace(
+    #     np.log10(g4_data_time[g4_data_time > 0].min() + value_),
+    #     np.log10(g4_data_time.max() + value_),
+    #     50,
+    # )
     bins = np.linspace(g4_data_time.min(), g4_data_time.max(), 50)
     plt.hist(
-        g4_data_time.flatten(),
+        g4_data_time.flatten() + value_,
         bins=bins,
         density=True,
         color="lightgray",
@@ -120,7 +204,7 @@ if "min_time_per_layer" in geant4_pl and "min_time_per_layer" in generated_pl:
         label="Geant4",
     )
     plt.hist(
-        gen_data_time.flatten(),
+        gen_data_time.flatten() + value_,
         bins=bins,
         density=True,
         histtype="step",
@@ -142,18 +226,52 @@ if "min_time_per_layer" in geant4_pl and "min_time_per_layer" in generated_pl:
     gen_points = gen_data_points.flatten()
     g4_time = g4_data_time.flatten()
     gen_time = gen_data_time.flatten()
+
     bins = np.linspace(0, g4_points.max(), 50)
+
     g4_mean_time, edges, _ = binned_statistic(
         g4_points, g4_time, statistic="mean", bins=bins
     )
     gen_mean_time, _, _ = binned_statistic(
         gen_points, gen_time, statistic="mean", bins=bins
     )
+
+    g4_std_time, _, _ = binned_statistic(g4_points, g4_time, statistic="std", bins=bins)
+    gen_std_time, _, _ = binned_statistic(
+        gen_points, gen_time, statistic="std", bins=bins
+    )
+
+    g4_count, _, _ = binned_statistic(g4_points, g4_time, statistic="count", bins=bins)
+    gen_count, _, _ = binned_statistic(
+        gen_points, gen_time, statistic="count", bins=bins
+    )
+
+    # Standard error of the mean: σ / √n
+    g4_sem = g4_std_time / np.sqrt(np.maximum(g4_count, 1))
+    gen_sem = gen_std_time / np.sqrt(np.maximum(gen_count, 1))
+
     centers = 0.5 * (edges[:-1] + edges[1:])
 
     plt.figure(figsize=(7, 5))
+
     plt.plot(centers, g4_mean_time, color="black", linewidth=2, label="Geant4")
+    plt.fill_between(
+        centers,
+        g4_mean_time - g4_sem,
+        g4_mean_time + g4_sem,
+        color="black",
+        alpha=0.2,
+    )
+
     plt.plot(centers, gen_mean_time, color="purple", linewidth=2, label="Generated")
+    plt.fill_between(
+        centers,
+        gen_mean_time - gen_sem,
+        gen_mean_time + gen_sem,
+        color="purple",
+        alpha=0.2,
+    )
+
     plt.xlabel("Num Points per Layer")
     plt.ylabel("Mean Min Time per Layer")
     plt.title("Min Time vs Num Points")
@@ -234,14 +352,41 @@ if "energy_per_layer" in geant4_pl and "energy_per_layer" in generated_pl:
     g4_mean_energy, edges, _ = binned_statistic(
         g4_points, g4_energy, statistic="mean", bins=bins
     )
+    g4_std_energy, _, _ = binned_statistic(
+        g4_points, g4_energy, statistic="std", bins=bins
+    )
     gen_mean_energy, _, _ = binned_statistic(
         gen_points, gen_energy, statistic="mean", bins=bins
+    )
+    gen_std_energy, _, _ = binned_statistic(
+        gen_points, gen_energy, statistic="std", bins=bins
+    )
+
+    g4_count, _, _ = binned_statistic(
+        g4_points, g4_energy, statistic="count", bins=bins
+    )
+    gen_count, _, _ = binned_statistic(
+        gen_points, gen_energy, statistic="count", bins=bins
     )
     centers = 0.5 * (edges[:-1] + edges[1:])
 
     plt.figure(figsize=(7, 5))
     plt.plot(centers, g4_mean_energy, color="black", linewidth=2, label="Geant4")
+    plt.fill_between(
+        centers,
+        g4_mean_energy - g4_std_energy / np.sqrt(np.maximum(g4_count, 1)),
+        g4_mean_energy + g4_std_energy / np.sqrt(np.maximum(g4_count, 1)),
+        color="black",
+        alpha=0.2,
+    )
     plt.plot(centers, gen_mean_energy, color="purple", linewidth=2, label="Generated")
+    plt.fill_between(
+        centers,
+        gen_mean_energy - gen_std_energy / np.sqrt(np.maximum(gen_count, 1)),
+        gen_mean_energy + gen_std_energy / np.sqrt(np.maximum(gen_count, 1)),
+        color="purple",
+        alpha=0.2,
+    )
     plt.xlabel("Num Points per Layer")
     plt.ylabel("Mean Energy per Layer")
     plt.title("Energy vs Num Points")
