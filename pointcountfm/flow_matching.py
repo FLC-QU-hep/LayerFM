@@ -22,8 +22,10 @@ class CNF(nn.Module):
         self.frequencies = nn.Buffer(
             torch.arange(1, frequencies + 1).reshape(1, -1) * torch.pi
         )
+        n = getattr(network, "n_layers", 78)
         self.multi_loss = MultiTaskLoss(
-            time_exists=network.dim_input > 78, energy_exists=network.dim_input > 156
+            time_exists=network.dim_input > n,
+            energy_exists=network.dim_input > 2 * n,
         )
 
     def forward(self, t: Tensor, x: Tensor, condition: Tensor) -> Tensor:
@@ -80,7 +82,6 @@ class CNF(nn.Module):
         pred = self(t.reshape(-1, 1), y, condition)
         residual = (pred - u) ** 2
         loss = self.multi_loss(residual, num_layers)
-
         return loss
 
     def sample(self, shape: tuple[int, int], steps: int, condition: Tensor) -> Tensor:
@@ -124,42 +125,24 @@ class CNF(nn.Module):
 class MultiTaskLoss(nn.Module):
     def __init__(self, time_exists: bool = False, energy_exists: bool = False) -> None:
         super().__init__()
-        # log(sigma^2) for each task - initialized to 0 (sigma=1)
-        self.log_var_points = nn.Parameter(torch.zeros(1))
-        self.log_var_time = nn.Parameter(torch.zeros(1)) if time_exists else None
-        self.log_var_energy = nn.Parameter(torch.zeros(1)) if energy_exists else None
+        self.time_exists = time_exists
+        self.energy_exists = energy_exists
 
     def forward(self, residual: Tensor, num_layers: int) -> Tensor:
-        # precision = 1 / sigma^2 = exp(-log_var)
-        loss_points = residual[:, :num_layers].mean()
-        loss_time = (
-            residual[:, num_layers : 2 * num_layers].mean()
-            if self.log_var_time is not None
-            else 0.0
-        )
-        loss_energy = (
-            residual[:, 2 * num_layers :].mean()
-            if self.log_var_energy is not None
-            else 0.0
-        )
-
-        precision_points = torch.exp(-self.log_var_points)
-        precision_time = (
-            torch.exp(-self.log_var_time) if self.log_var_time is not None else 0.0
-        )
-        precision_energy = (
-            torch.exp(-self.log_var_energy) if self.log_var_energy is not None else 0.0
-        )
-
-        loss = precision_points * loss_points + self.log_var_points
-
-        if self.log_var_time is not None:
-            loss = loss + precision_time * loss_time + self.log_var_time
-
-        if self.log_var_energy is not None:
-            loss = loss + precision_energy * loss_energy + self.log_var_energy
-
+        loss = residual[:, :num_layers].mean()
+        if self.time_exists:
+            loss = loss + residual[:, num_layers : 2 * num_layers].mean()
+        if self.energy_exists:
+            loss = loss + residual[:, 2 * num_layers :].mean()
         return loss
+
+    def learned_sigmas(self) -> dict[str, float]:
+        sigmas = {"points": 1.0}
+        if self.time_exists:
+            sigmas["time"] = 1.0
+        if self.energy_exists:
+            sigmas["energy"] = 1.0
+        return sigmas
 
 
 class Distilled(nn.Module):

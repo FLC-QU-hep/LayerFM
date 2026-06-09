@@ -284,6 +284,8 @@ class DataLoader:
         self.condition = self.condition.to(device_dtype)
         self.transform_inc.to(device_dtype)
         self.transform_num_points.to(device_dtype)
+        self.transform_min_time.to(device_dtype)
+        self.transform_en_perl.to(device_dtype)
         if self.noise is not None:
             self.noise = self.noise.to(device_dtype)
 
@@ -311,6 +313,8 @@ def get_loaders(
         data_file,
         transform_inc=transform_inc,
         transform_num_points=transform_num_points,
+        transform_min_time=transform_min_time,
+        transform_en_perl=transform_en_perl,
         batch_size=batch_size,
         shuffle=True,
         start=0,
@@ -325,6 +329,8 @@ def get_loaders(
         data_file,
         transform_inc=train_loader.transform_inc,
         transform_num_points=train_loader.transform_num_points,
+        transform_min_time=train_loader.transform_min_time,
+        transform_en_perl=train_loader.transform_en_perl,
         batch_size=batch_size_val,
         shuffle=False,
         start=-num_val,

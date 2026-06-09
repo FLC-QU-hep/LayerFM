@@ -41,6 +41,12 @@ def parse_args(args: list[str] | None = None):
             "file if it exists."
         ),
     )
+    parser.add_argument(
+        "--num-layers",
+        type=int,
+        default=78,
+        help="Number of calorimeter layers (= features per output channel). Must match the trained model.",
+    )
     return parser.parse_args(args)
 
 
@@ -66,14 +72,18 @@ def main():
     start = time.time()
 
     class InferenceModel(torch.nn.Module):
-        def __init__(self, model: torch.jit.ScriptModule):
+        def __init__(self, model: torch.jit.ScriptModule, n_layers: int):
             super().__init__()
             self.model = model
+            self.n_layers: int = n_layers
 
         def _check_hallucinations(
             self, result: torch.Tensor, condition: torch.Tensor
         ) -> torch.Tensor:
-            while result[:, :78].max() > 1e4 or result[:, :78].min() < -1e4:
+            while (
+                result[:, : self.n_layers].max() > 1e4
+                or result[:, : self.n_layers].min() < -1e4
+            ):
                 print("re-sampling...")
                 raw = self.model(condition)
                 list_ = []
@@ -87,7 +97,7 @@ def main():
             for i in range(conditions.size(0)):
                 result = self.model(conditions[[i]])
                 list_ = []
-                if result[-1].shape[1] != 78:
+                if result[-1].shape[1] != self.n_layers:
                     result = result[:-1]
                 for j in range(len(result)):
                     list_.append(result[j])
@@ -96,7 +106,7 @@ def main():
 
             return torch.cat(results, dim=0)
 
-    inference = InferenceModel(model)
+    inference = InferenceModel(model, n_layers=args.num_layers)
     inference = inference.to(torch.float32)
     inference = torch.jit.script(inference)
     # inference = torch.jit.optimize_for_inference(inference)
@@ -167,7 +177,7 @@ def main():
 
     print("Saving results...")
     print(results.shape)
-    layers = 78
+    layers = args.num_layers
     results = torch.clamp(results, min=0.0)
     results_points = (results[:, :layers] + 0.5).to(torch.int32)
     if results.shape[1] > layers:

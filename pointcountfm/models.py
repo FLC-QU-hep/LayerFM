@@ -7,54 +7,147 @@ __all__ = [
 ]
 
 
+class _Block(nn.Module):
+    """
+    Pre-norm MLP block with optional context (time + condition) injection.
+    Uses a residual connection when input and output dims are equal.
+    """
+
+    def __init__(
+        self,
+        d_in: int,
+        d_out: int,
+        context_dim: int,
+        activation: type[nn.Module],
+        dropout: float,
+    ) -> None:
+        super().__init__()
+        self.is_residual = d_in == d_out
+        self.norm = nn.LayerNorm(d_in)
+        self.linear = nn.Linear(d_in, d_out)
+        self.act = activation()
+        # projects context into the hidden dimension and adds it before the activation
+        self.context_proj = (
+            nn.Linear(context_dim, d_out, bias=False) if context_dim > 0 else None
+        )
+        self.drop = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
+
+    def forward(
+        self, x: torch.Tensor, context: torch.Tensor | None = None
+    ) -> torch.Tensor:
+        h = self.linear(self.norm(x))
+        if self.context_proj is not None and context is not None:
+            h = h + self.context_proj(context)
+        h = self.drop(self.act(h))
+        return (x + h) if self.is_residual else h
+
+
 class FullyConnected(nn.Module):
+    """
+    Velocity network for conditional flow matching on point-count and
+    min-time-per-layer histograms.
+
+    The input x is split into up to three channels of n_layers features each:
+        x = [ points_per_layer | (opt) min_time_per_layer | (opt) energy_per_layer ]
+
+    Each channel is independently embedded, then a shared residual MLP backbone
+    predicts the velocity, conditioned on the Fourier-embedded flow time t and
+    the incident-energy condition.
+
+    Parameters
+    ----------
+    dim_input     : total input dimension (1, 2, or 3 × n_layers)
+    dim_condition : dimension of the external condition vector
+    dim_time      : dimension of the (pre-embedded) flow time t
+    dim_embedding : width of the per-channel embedding MLPs and context MLP
+    n_layers      : number of calorimeter layers (= features per channel)
+    hidden_dims   : width of each backbone block; same dim → residual connection
+    activation    : pointwise activation class
+    dropout       : dropout probability (0 = disabled)
+    """
+
     def __init__(
         self,
         dim_input: int,
         dim_condition: int = 0,
         dim_time: int = 0,
+        dim_embedding: int = 128,
+        n_layers: int = 78,
         hidden_dims: list[int] | None = None,
         activation: type[nn.Module] = nn.SiLU,
+        dropout: float = 0.0,
     ) -> None:
         super().__init__()
-
+        self.dim_input = dim_input
+        self.n_layers = n_layers
         if hidden_dims is None:
-            hidden_dims = [64, 64]
+            hidden_dims = [256, 256, 256]
 
-        self.points_embedding = nn.Sequential(
-            nn.Linear(78, 128),
-            activation(),
-            nn.Linear(128, 128),
-            activation(),
-        )
-        dim_input = 128
-        if dim_input > 78:
-            self.time_embedding = nn.Sequential(
-                nn.Linear(78, 128),
+        # ── context MLP: fuses Fourier-time + condition ──────────────────────
+        context_in = dim_time + dim_condition
+        context_dim = dim_embedding * 2
+        self.context_mlp = (
+            nn.Sequential(
+                nn.Linear(context_in, context_dim),
                 activation(),
-                nn.Linear(128, 128),
+                nn.Linear(context_dim, context_dim),
                 activation(),
             )
-            dim_input += 128
-            if dim_input > 156:
-                self.energy_embedding = nn.Sequential(
-                    nn.Linear(78, 128),
-                    activation(),
-                    nn.Linear(128, 128),
-                    activation(),
-                )
-                dim_input += 128
+            if context_in > 0
+            else None
+        )
+        eff_context_dim = context_dim if self.context_mlp is not None else 0
 
-        self.dim_input = dim_input
-        layers = []
-        prev_dim = dim_input + dim_condition + dim_time
-        for dim in hidden_dims:
-            layers.append(nn.Linear(prev_dim, dim))
-            layers.append(nn.LayerNorm(dim))  # only change from the original code
-            layers.append(activation())
-            prev_dim = dim
-        layers.append(nn.Linear(prev_dim, dim_input))
-        self.network = nn.Sequential(*layers)
+        # ── per-channel input embeddings ─────────────────────────────────────
+        self.points_embedding = nn.Sequential(
+            nn.Linear(n_layers, dim_embedding),
+            activation(),
+            nn.Linear(dim_embedding, dim_embedding),
+        )
+        total_embed_dim = dim_embedding
+
+        self.time_channel_embedding = None
+        if dim_input > n_layers:
+            self.time_channel_embedding = nn.Sequential(
+                nn.Linear(n_layers, dim_embedding),
+                activation(),
+                nn.Linear(dim_embedding, dim_embedding),
+            )
+            total_embed_dim += dim_embedding
+
+        self.energy_channel_embedding = None
+        if dim_input > 2 * n_layers:
+            self.energy_channel_embedding = nn.Sequential(
+                nn.Linear(n_layers, dim_embedding),
+                activation(),
+                nn.Linear(dim_embedding, dim_embedding),
+            )
+            total_embed_dim += dim_embedding
+
+        # ── residual backbone ────────────────────────────────────────────────
+        self.input_proj = nn.Linear(total_embed_dim, hidden_dims[0])
+
+        self.blocks = nn.ModuleList(
+            [
+                _Block(d_in, d_out, eff_context_dim, activation, dropout)
+                for d_in, d_out in [(hidden_dims[0], hidden_dims[0])]
+                + list(zip(hidden_dims, hidden_dims[1:]))
+            ]
+        )
+
+        self.output_proj = nn.Sequential(
+            nn.LayerNorm(hidden_dims[-1]),
+            nn.Linear(hidden_dims[-1], total_embed_dim),
+        )
+
+        # ── output heads: one per input channel ─────────────────────────────
+        self.points_head = nn.Linear(total_embed_dim, n_layers)
+        self.time_head = (
+            nn.Linear(total_embed_dim, n_layers) if dim_input > n_layers else None
+        )
+        self.energy_head = (
+            nn.Linear(total_embed_dim, n_layers) if dim_input > 2 * n_layers else None
+        )
 
     def forward(
         self,
@@ -62,19 +155,50 @@ class FullyConnected(nn.Module):
         x: torch.Tensor,
         condition: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        x_emb = self.points_embedding(x[:, :78])
-        if x.shape[1] > 78:
-            time_emb = self.time_embedding(x[:, 78:156])
-            x_emb = torch.cat([x_emb, time_emb], dim=-1)
-            if x.shape[1] > 156:
-                energy_emb = self.energy_embedding(x[:, 156:])
-                x_emb = torch.cat([x_emb, energy_emb], dim=-1)
-
-        input = [t, x]
+        # ── context ──────────────────────────────────────────────────────────
+        ctx_parts = [t] if t.shape[-1] > 0 else []
         if condition is not None:
-            input.append(condition)
-        input = torch.cat(input, dim=-1)
-        return self.network(input)
+            ctx_parts.append(condition)
+        context = (
+            self.context_mlp(torch.cat(ctx_parts, dim=-1))
+            if (self.context_mlp is not None and ctx_parts)
+            else None
+        )
+
+        # ── embed input channels ─────────────────────────────────────────────
+        x_emb = self.points_embedding(x[:, : self.n_layers])
+        if self.time_channel_embedding is not None:
+            x_emb = torch.cat(
+                [
+                    x_emb,
+                    self.time_channel_embedding(
+                        x[:, self.n_layers : 2 * self.n_layers]
+                    ),
+                ],
+                dim=-1,
+            )
+        if self.energy_channel_embedding is not None:
+            x_emb = torch.cat(
+                [
+                    x_emb,
+                    self.energy_channel_embedding(x[:, 2 * self.n_layers :]),
+                ],
+                dim=-1,
+            )
+
+        # ── backbone ─────────────────────────────────────────────────────────
+        h = self.input_proj(x_emb)
+        for block in self.blocks:
+            h = block(h, context)
+        h = self.output_proj(h)
+
+        # ── output heads ─────────────────────────────────────────────────────
+        out = self.points_head(h)
+        if self.time_head is not None:
+            out = torch.cat([out, self.time_head(h)], dim=-1)
+        if self.energy_head is not None:
+            out = torch.cat([out, self.energy_head(h)], dim=-1)
+        return out
 
 
 class ConcatSquash(nn.Module):

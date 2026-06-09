@@ -1,5 +1,6 @@
 import argparse
 import os
+import subprocess
 
 import h5py
 import matplotlib.pyplot as plt
@@ -18,18 +19,18 @@ path = path if path.endswith("/") else path + "/"
 name = "output_FM.h5"
 
 # generation
-# subprocess.run(
-#     [
-#         "python",
-#         "pointcountfm/inference_cond_file.py",
-#         f"{path}compiled.pt",
-#         "../pion-clouds/dataset/hdf5_HGx9new/all_interactions_pions_regular_ECAL+HCAL_10-90GeV_10.slcio.root_with_time.hdf5",
-#         "-o",
-#         f"{path}{name}",
-#         "--pdg-codes",
-#         "211",
-#     ]
-# )
+subprocess.run(
+    [
+        "python",
+        "pointcountfm/inference_cond_file.py",
+        f"{path}compiled.pt",
+        "../pion-clouds/dataset/hdf5_HGx9new/all_interactions_pions_regular_ECAL+HCAL_10-90GeV_10.slcio.root_with_time.hdf5",
+        "-o",
+        f"{path}{name}",
+        "--pdg-codes",
+        "211",
+    ]
+)
 
 
 def plot_num_points_multi_energy(
@@ -189,12 +190,12 @@ plot_num_points_multi_energy(
 if "min_time_per_layer" in geant4_pl and "min_time_per_layer" in generated_pl:
     plt.figure(figsize=(6, 5))
     value_ = 0.01
-    # bins_log = np.logspace(
-    #     np.log10(g4_data_time[g4_data_time > 0].min() + value_),
-    #     np.log10(g4_data_time.max() + value_),
-    #     50,
-    # )
-    bins = np.linspace(g4_data_time.min(), g4_data_time.max(), 50)
+    bins = np.logspace(
+        np.log10(g4_data_time[g4_data_time > 0].min() - value_),
+        np.log10(g4_data_time.max() + value_),
+        50,
+    )
+    # bins = np.linspace(g4_data_time.min(), g4_data_time.max(), 50)
     plt.hist(
         g4_data_time.flatten() + value_,
         bins=bins,
@@ -216,6 +217,7 @@ if "min_time_per_layer" in geant4_pl and "min_time_per_layer" in generated_pl:
     plt.xlabel("Min Time per Layer")
     plt.ylabel("Density")
     plt.yscale("log")
+    plt.xscale("log")
     plt.legend()
     plt.tight_layout()
     plt.savefig(path + "plots/{}_min_time.png".format(name.split(".")[0]))

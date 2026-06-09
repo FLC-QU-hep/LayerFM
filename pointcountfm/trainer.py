@@ -282,6 +282,8 @@ class Trainer:
             print(f"Train loss: {train_loss:.4f}")
             print(f"Val loss: {val_loss:.4f}")
             print(f"Learning rate: {self.optimizer.param_groups[0]['lr']:.2e}")
+            sigmas = self.model.multi_loss.learned_sigmas()
+            print(f"Learned sigmas: { {k: f'{v:.3f}' for k, v in sigmas.items()} }")
             print()
             sys.stdout.flush()
 
@@ -391,6 +393,8 @@ class Trainer:
                 if samples.shape[1] > self.data_config["num_layers"]
                 else None
             )
+            if samples_t_time is not None:
+                samples_t_time[samples_t_points <= 0] = float("nan")
             samples_en_perl = (
                 self.val_loader.transform_en_perl.inverse(
                     samples[
@@ -552,6 +556,7 @@ class Trainer:
                 transfrom_en_perl: Transformation,
                 dim_data: int,
                 steps: int,
+                num_layers: int,
             ) -> None:
                 super().__init__()
                 self.model = model
@@ -561,8 +566,9 @@ class Trainer:
                 self.transform_en_perl = transfrom_en_perl
                 self.dim_data = dim_data
                 self.steps = steps
-                self.use_time = transform_min_time is not None
-                self.use_enperl = transfrom_en_perl is not None
+                self.num_layers = num_layers
+                self.use_time = dim_data > num_layers
+                self.use_enperl = dim_data > 2 * num_layers
 
             def forward(self, condition: torch.Tensor) -> torch.Tensor:
                 condition = torch.clone(condition)
@@ -570,19 +576,17 @@ class Trainer:
                 samples = self.model.sample(
                     (condition.shape[0], self.dim_data), self.steps, condition=condition
                 )
-                samples_points = self.transform_num_points.inverse(samples[:, :78])
-                samples_time, samples_en_perl = None, None
-                samples_time = (
-                    self.transform_min_time.inverse(samples[:, 78:156])
-                    if self.use_time
-                    else None
-                )
-                samples_en_perl = (
-                    self.transform_en_perl.inverse(samples[:, 156:234])
-                    if self.use_enperl
-                    else None
-                )
-                return [samples_points, samples_time, samples_en_perl]
+                n = self.num_layers
+                result = [self.transform_num_points.inverse(samples[:, :n])]
+                if self.use_time:
+                    result.append(
+                        self.transform_min_time.inverse(samples[:, n : n * 2])
+                    )
+                if self.use_enperl:
+                    result.append(
+                        self.transform_en_perl.inverse(samples[:, n * 2 : n * 3])
+                    )
+                return result
 
         sampler = Sampler(
             model=self.model,
@@ -592,6 +596,7 @@ class Trainer:
             transfrom_en_perl=self.val_loader.transform_en_perl,
             dim_data=self.dim_data,
             steps=self.steps,
+            num_layers=self.data_config["num_layers"],
         )
         sampler = copy.deepcopy(sampler)
         sampler = sampler.to("cpu")

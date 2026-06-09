@@ -1,16 +1,14 @@
-name: LayerFM_PandT_multiLoss_embeddings
+name: LayerFM_PandT_embeddings_multiLoss_quantileALL
 
 data:
   data_file: ../pion-clouds/files/npy_array/points_HGx9new/input_for_pcFM.h5
   transform_num_points:
-    - [Log, {alpha: 0.5}]
-    - [StandardScaler, {shape: [1, 78]}]
+    - [Dequantize, {}]
+    - [QuantileTransformer, {n_quantiles: 1000, shape: [1, 78]}]
   transform_min_time:
-    - [Log, {alpha: 0.1}]
-    - [StandardScaler, {shape: [1, 78]}]
+    - [QuantileTransformer, {n_quantiles: 1000, shape: [1, 78]}]
   transform_en_perl:
-    - [Log, {alpha: 0.5}]
-    - [StandardScaler, {shape: [1, 78]}]
+    - [QuantileTransformer, {n_quantiles: 1000, shape: [1, 78]}]
   transform_inc:
     - [StandardScaler, {shape: [1, 1]}]
   batch_size: 1024
@@ -24,6 +22,8 @@ model:
   dim_input: 156 # [points, min_time]
   dim_condition: 5 # 3 directions + 1 energy
   dim_time: 6
+  n_layers: 78
+  dim_embedding: 128
   hidden_dims:
     - 256
     - 512
