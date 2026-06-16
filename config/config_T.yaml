@@ -1,26 +1,31 @@
-name: LayerFM_PandT_embeddings_multiLoss_quantileALL
+name: LayerFM_PandT_siLOGpoints_logINC_noDir_weights04
 
 data:
   data_file: ../pion-clouds/files/npy_array/points_HGx9new/input_for_pcFM.h5
   transform_num_points:
     - [Dequantize, {}]
-    - [QuantileTransformer, {n_quantiles: 1000, shape: [1, 78]}]
+    - [Log, {alpha: 0.5}]
+    - [StandardScaler, {shape: [1, 78]}]
   transform_min_time:
     - [QuantileTransformer, {n_quantiles: 1000, shape: [1, 78]}]
   transform_en_perl:
-    - [QuantileTransformer, {n_quantiles: 1000, shape: [1, 78]}]
+    - [Log, {alpha: 0.5}]
+    - [StandardScaler, {shape: [1, 78]}]
   transform_inc:
+    - [Log, {alpha: 0.0}]
     - [StandardScaler, {shape: [1, 1]}]
   batch_size: 1024
   batch_size_val: 4096
   num_val: 50000
   num_classes: 0
   num_layers: 78
+  use_directions: false
+  use_labels: false
 
 model:
   name: FullyConnected
   dim_input: 156 # [points, min_time]
-  dim_condition: 5 # 3 directions + 1 energy
+  dim_condition: 1 # 1 energy only
   dim_time: 6
   n_layers: 78
   dim_embedding: 128
@@ -31,8 +36,11 @@ model:
     - 512
     - 256
 
+flow:
+  time_weight: 0.4
+
 training:
-  epochs: 1500
+  epochs: 2000
   optimizer:
     name: Adam
     lr: 0.0007 #0.001

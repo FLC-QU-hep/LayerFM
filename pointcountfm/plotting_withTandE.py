@@ -23,12 +23,13 @@ subprocess.run(
     [
         "python",
         "pointcountfm/inference_cond_file.py",
-        f"{path}compiled.pt",
+        f"{path}checkpoint.pt",
         "../pion-clouds/dataset/hdf5_HGx9new/all_interactions_pions_regular_ECAL+HCAL_10-90GeV_10.slcio.root_with_time.hdf5",
         "-o",
         f"{path}{name}",
         "--pdg-codes",
         "211",
+        "--from-checkpoint",
     ]
 )
 

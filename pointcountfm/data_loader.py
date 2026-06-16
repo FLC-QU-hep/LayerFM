@@ -183,6 +183,8 @@ class DataLoader:
         load_noise: bool = False,
         num_classes: int = 0,
         num_layers: int = 78,
+        use_directions: bool = True,
+        use_labels: bool = True,
     ) -> None:
         self.data_file = data_file
         self.transform_inc = self.__compose_trafo(transform_inc)
@@ -223,11 +225,14 @@ class DataLoader:
 
         if fit_transform:
             e_incident = self.transform_inc.fit(e_incident)
+            active_mask = (
+                num_points > 0
+            )  # layers with hits, used to mask per-layer transforms
             num_points = self.transform_num_points.fit(num_points)
             if mint is not None:
-                mint = self.transform_min_time.fit(mint)
+                mint = self.transform_min_time.fit(mint, active_mask)
             if en_perl is not None:
-                en_perl = self.transform_en_perl.fit(en_perl)
+                en_perl = self.transform_en_perl.fit(en_perl, active_mask)
         else:
             e_incident = self.transform_inc(e_incident)
             num_points = self.transform_num_points(num_points)
@@ -243,15 +248,13 @@ class DataLoader:
         if en_perl is not None:
             self.data = torch.cat([self.data, en_perl], dim=-1)
 
-        if labels is not None and directions is not None:
-            self.condition = torch.cat([e_incident, labels, directions], dim=-1)
-        elif labels is not None:
-            self.condition = torch.cat([e_incident, labels], dim=-1)
-        elif directions is not None:
-            self.condition = torch.cat([e_incident, directions], dim=-1)
-        else:
-            self.condition = e_incident
-        self.has_directions = directions is not None
+        parts = [e_incident]
+        if labels is not None and use_labels:
+            parts.append(labels)
+        if directions is not None and use_directions:
+            parts.append(directions)
+        self.condition = torch.cat(parts, dim=-1) if len(parts) > 1 else parts[0]
+        self.has_directions = directions is not None and use_directions
         self.noise = noise
 
     @staticmethod
@@ -304,6 +307,8 @@ def get_loaders(
     load_noise: bool = False,
     num_classes: int = 0,
     num_layers: int = 78,
+    use_directions: bool = True,
+    use_labels: bool = True,
 ) -> tuple[DataLoader, DataLoader]:
     if num_train is None:
         num_train = -num_val
@@ -324,6 +329,8 @@ def get_loaders(
         load_noise=load_noise,
         num_classes=num_classes,
         num_layers=num_layers,
+        use_directions=use_directions,
+        use_labels=use_labels,
     )
     test_loader = DataLoader(
         data_file,
@@ -340,5 +347,7 @@ def get_loaders(
         load_noise=load_noise,
         num_classes=num_classes,
         num_layers=num_layers,
+        use_directions=use_directions,
+        use_labels=use_labels,
     )
     return train_loader, test_loader

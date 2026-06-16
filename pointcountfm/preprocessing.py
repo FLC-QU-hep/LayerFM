@@ -12,6 +12,7 @@ __all__ = [
     "Affine",
     "Clamp",
     "StandardScaler",
+    "MinMaxScaler",
     "QuantileTransformer",
     "Dequantize",
     "compose",
@@ -152,6 +153,34 @@ class StandardScaler(Transformation):
         return x * self.std + self.mean
 
 
+class MinMaxScaler(Transformation):
+    def __init__(self, shape: tuple[int]) -> None:
+        super().__init__()
+        self.register_buffer("min", torch.zeros(shape))
+        self.register_buffer("scale", torch.ones(shape))
+        self.shape = shape
+
+    def fit(self, x: torch.Tensor, mask: torch.Tensor | None = None) -> torch.Tensor:
+        if mask is None:
+            mask = torch.ones_like(x, dtype=torch.bool)
+        dims = tuple(torch.where(torch.tensor(self.shape) == 1)[0].tolist())
+        big = torch.full_like(x, float("inf"))
+        small = torch.full_like(x, float("-inf"))
+        x_min = -torch.amax(torch.where(mask, -x, big), dim=dims, keepdim=True)
+        x_max = torch.amax(torch.where(mask, x, small), dim=dims, keepdim=True)
+        self.min = x_min
+        scale = x_max - x_min
+        scale[scale == 0] = 1
+        self.scale = scale
+        return self.forward(x)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return (x - self.min) / self.scale
+
+    def inverse(self, x: torch.Tensor) -> torch.Tensor:
+        return x * self.scale + self.min
+
+
 class QuantileTransformer(Transformation):
     """
     Per-feature quantile normalisation: maps the empirical distribution of each
@@ -244,7 +273,7 @@ class Dequantize(Transformation):
         return x.float() + torch.rand(x.shape, dtype=torch.float32, device=x.device)
 
     def inverse(self, x: torch.Tensor) -> torch.Tensor:
-        return torch.floor(x)
+        return torch.clamp(torch.floor(x), min=0)
 
 
 def compose(transformation: list[list[str | dict | list | None]] | None) -> Sequence:

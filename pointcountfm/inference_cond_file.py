@@ -1,16 +1,20 @@
 import argparse
+import os
 import time
 from collections.abc import Iterable
 
 import h5py
 import showerdata
 import torch
+import torch.nn as nn
 import yaml
 
 
 def parse_args(args: list[str] | None = None):
     parser = argparse.ArgumentParser(description="Inference on a model")
-    parser.add_argument("model", type=str, help="Model file")
+    parser.add_argument(
+        "model", type=str, help="Model file (compiled.pt or checkpoint.pt)"
+    )
     parser.add_argument(
         "input_file", type=str, help="Input file with conditioning data"
     )
@@ -47,6 +51,33 @@ def parse_args(args: list[str] | None = None):
         default=78,
         help="Number of calorimeter layers (= features per output channel). Must match the trained model.",
     )
+    parser.add_argument(
+        "--from-checkpoint",
+        action="store_true",
+        help=(
+            "Load from a checkpoint.pt (raw state dict) instead of a compiled TorchScript model. "
+            "Requires conf.yaml in the same directory as the checkpoint, or use --config."
+        ),
+    )
+    parser.add_argument(
+        "--config",
+        type=str,
+        default=None,
+        help="Path to config yaml. Only used with --from-checkpoint. "
+        "Defaults to conf.yaml in the model directory.",
+    )
+    parser.add_argument(
+        "--steps",
+        type=int,
+        default=50,
+        help="Number of ODE integration steps. Only used with --from-checkpoint.",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=1024,
+        help="Batch size for generation. Only used with --from-checkpoint.",
+    )
     return parser.parse_args(args)
 
 
@@ -57,19 +88,115 @@ def to_labels(pdg_codes: torch.Tensor, pdgs: Iterable[int]) -> torch.Tensor:
     return labels
 
 
-def main():
-    args = parse_args()
-    torch.set_num_threads(1)
+class _CheckpointSampler(nn.Module):
+    """Python sampler built from a checkpoint + config; mirrors the Sampler in trainer.py."""
 
-    print("Loading model...")
-    start = time.time()
-    model = torch.jit.load(args.model)
-    print(model)
-    model.eval()
-    print(f"Model loaded in {(time.time() - start) * 1000.0:.1f}ms")
+    def __init__(
+        self,
+        flow: nn.Module,
+        transform_inc: nn.Module,
+        transform_num_points: nn.Module,
+        transform_min_time: nn.Module,
+        transform_en_perl: nn.Module,
+        num_layers: int,
+        dim_data: int,
+        steps: int,
+        use_directions: bool = True,
+        use_labels: bool = True,
+    ) -> None:
+        super().__init__()
+        self.flow = flow
+        self.transform_inc = transform_inc
+        self.transform_num_points = transform_num_points
+        self.transform_min_time = transform_min_time
+        self.transform_en_perl = transform_en_perl
+        self.num_layers = num_layers
+        self.dim_data = dim_data
+        self.steps = steps
+        self.use_time = dim_data > num_layers
+        self.use_enperl = dim_data > 2 * num_layers
+        self.use_directions = use_directions
+        self.use_labels = use_labels
 
-    print("Compiling inference function...")
-    start = time.time()
+    @torch.no_grad()
+    def forward(self, condition: torch.Tensor) -> list[torch.Tensor]:
+        cond = condition.clone().float()
+        cond[:, :1] = self.transform_inc(cond[:, :1])
+        samples = self.flow.sample(
+            (cond.shape[0], self.dim_data), self.steps, condition=cond
+        )
+        n = self.num_layers
+        result = [self.transform_num_points.inverse(samples[:, :n])]
+        if self.use_time:
+            result.append(self.transform_min_time.inverse(samples[:, n : n * 2]))
+        if self.use_enperl:
+            result.append(self.transform_en_perl.inverse(samples[:, n * 2 : n * 3]))
+        return result
+
+
+def load_from_checkpoint(
+    model_path: str, config_path: str | None = None, steps: int = 50
+) -> _CheckpointSampler:
+    """Rebuild a _CheckpointSampler from checkpoint.pt + conf.yaml."""
+    from pointcountfm import flow_matching, models
+    from pointcountfm.data_loader import get_loaders
+
+    config_dir = os.path.dirname(os.path.abspath(model_path))
+    if config_path is None:
+        config_path = os.path.join(config_dir, "conf.yaml")
+    if not os.path.exists(config_path):
+        raise FileNotFoundError(
+            f"Config file not found at {config_path}. "
+            "Pass --config to specify the path explicitly."
+        )
+
+    with open(config_path) as f:
+        cfg = yaml.safe_load(f)
+
+    model_cfg = cfg["model"].copy()
+    data_cfg = cfg["data"].copy()
+
+    # Build CNF from config
+    flow_config = model_cfg.pop("flow") if "flow" in model_cfg else {}
+    model_name = model_cfg.pop("name")
+    net = getattr(models, model_name)(**model_cfg)
+    flow = flow_matching.CNF(net, **flow_config)
+
+    # Load weights
+    ckpt = torch.load(model_path, map_location="cpu", weights_only=True)
+    flow.load_state_dict(ckpt["model"])
+    flow.eval()
+    flow = flow.to(torch.float32)
+
+    # Re-fit transforms on training data (same split as training)
+    print("Fitting transforms on training data...")
+    data_cfg["device"] = "cpu"
+    train_loader, _ = get_loaders(**data_cfg)
+
+    num_layers = data_cfg.get("num_layers", 78)
+    dim_data = train_loader.data.shape[1]
+
+    return _CheckpointSampler(
+        flow=flow,
+        transform_inc=train_loader.transform_inc,
+        transform_num_points=train_loader.transform_num_points,
+        transform_min_time=train_loader.transform_min_time,
+        transform_en_perl=train_loader.transform_en_perl,
+        num_layers=num_layers,
+        dim_data=dim_data,
+        steps=steps,
+        use_directions=data_cfg.get("use_directions", True),
+        use_labels=data_cfg.get("use_labels", True),
+    )
+
+
+def _run_compiled_inference(
+    model_jit: torch.jit.ScriptModule,
+    conditions: torch.Tensor,
+    n_layers: int,
+    pdg_codes: list[int],
+) -> torch.Tensor:
+    """Run inference using a compiled TorchScript model."""
 
     class InferenceModel(torch.nn.Module):
         def __init__(self, model: torch.jit.ScriptModule, n_layers: int):
@@ -103,13 +230,13 @@ def main():
                     list_.append(result[j])
                 results.append(torch.cat(list_, dim=-1))
                 results[-1] = self._check_hallucinations(results[-1], conditions[[i]])
-
             return torch.cat(results, dim=0)
 
-    inference = InferenceModel(model, n_layers=args.num_layers)
+    print("Compiling inference function...")
+    start = time.time()
+    inference = InferenceModel(model_jit, n_layers=n_layers)
     inference = inference.to(torch.float32)
     inference = torch.jit.script(inference)
-    # inference = torch.jit.optimize_for_inference(inference)
     print(f"Inference function compiled in {(time.time() - start) * 1000.0:.1f}ms")
 
     print("Warming up...")
@@ -118,16 +245,78 @@ def main():
         (
             torch.tensor([[50.0]]),
             torch.nn.functional.one_hot(
-                torch.tensor([0]), num_classes=len(args.pdg_codes)
+                torch.tensor([0]), num_classes=len(pdg_codes)
             ).to(torch.float32),
             torch.tensor([[0.0, 1.0, 0.0]]),
         ),
         dim=1,
     )
-
     inference(example_conditions)
     inference(example_conditions)
     print(f"Warmup done in {(time.time() - start) * 1000.0:.1f}ms")
+
+    print("Running inference...")
+    start = time.time()
+    results = inference(conditions)
+    print(f"Inference done in {(time.time() - start):.2f}s")
+    return results
+
+
+def _run_checkpoint_inference(
+    sampler: _CheckpointSampler,
+    conditions: torch.Tensor,
+    n_layers: int,
+    batch_size: int = 1024,
+) -> torch.Tensor:
+    """Run inference using a Python _CheckpointSampler."""
+    print("Running inference...")
+    start = time.time()
+    results = []
+    n = conditions.size(0)
+    for batch_start in range(0, n, batch_size):
+        batch_cond = conditions[batch_start : batch_start + batch_size]
+        while True:
+            result_list = sampler(batch_cond)
+            result = torch.cat(result_list, dim=-1)
+            bad = (result[:, :n_layers] > 1e4) | (result[:, :n_layers] < -1e4)
+            if not bad.any():
+                break
+            # re-sample only the bad rows
+            bad_idx = bad.any(dim=1).nonzero(as_tuple=True)[0]
+            print(f"re-sampling {bad_idx.numel()} hallucinated rows...")
+            while bad_idx.numel() > 0:
+                fix_list = sampler(batch_cond[bad_idx])
+                fix = torch.cat(fix_list, dim=-1)
+                result[bad_idx] = fix
+                still_bad = (fix[:, :n_layers] > 1e4) | (fix[:, :n_layers] < -1e4)
+                bad_idx = bad_idx[still_bad.any(dim=1)]
+        results.append(result)
+        done = min(batch_start + batch_size, n)
+        print(f"  {done}/{n} samples generated")
+    results_tensor = torch.cat(results, dim=0)
+    elapsed = time.time() - start
+    print(f"Inference done in {elapsed:.2f}s")
+    print(f"Average inference time: {elapsed / n * 1000.0:.1f}ms per sample")
+    return results_tensor
+
+
+def main():
+    args = parse_args()
+    torch.set_num_threads(1)
+
+    print("Loading model...")
+    start = time.time()
+
+    if args.from_checkpoint:
+        sampler = load_from_checkpoint(args.model, args.config, steps=args.steps)
+        print(f"Model loaded in {(time.time() - start) * 1000.0:.1f}ms")
+        use_compiled = False
+    else:
+        model_jit = torch.jit.load(args.model)
+        print(model_jit)
+        model_jit.eval()
+        print(f"Model loaded in {(time.time() - start) * 1000.0:.1f}ms")
+        use_compiled = True
 
     print("Loading conditioning data...")
     start = time.time()
@@ -153,27 +342,34 @@ def main():
             config = yaml.safe_load(file)
         num_showers = f[list(f.keys())[0]].shape[0]
         cond_data = h5py.File(config["data"]["data_file"], "r")
-        conditions = torch.concatenate(
-            (
-                torch.from_numpy(cond_data["energies"][:num_showers]).to(torch.float32),
+        use_labels = sampler.use_labels if not use_compiled else True
+        use_directions = sampler.use_directions if not use_compiled else True
+        cond_parts = [
+            torch.from_numpy(cond_data["energies"][:num_showers]).to(torch.float32)
+        ]
+        if use_labels and "labels" in cond_data:
+            cond_parts.append(
                 torch.from_numpy(cond_data["labels"][:num_showers])
                 .unsqueeze(-1)
-                .to(torch.float32),
+                .to(torch.float32)
+            )
+        if use_directions and "directions" in cond_data:
+            cond_parts.append(
                 torch.from_numpy(cond_data["directions"][:num_showers]).to(
                     torch.float32
-                ),
-            ),
-            dim=-1,
-        )
-
+                )
+            )
+        conditions = torch.concatenate(cond_parts, dim=-1)
     print(f"Conditioning data loaded in {(time.time() - start) * 1000.0:.1f}ms")
-    print("Running inference...")
-    start = time.time()
-    results = inference(conditions)
-    print(f"Inference done in {(time.time() - start):.2f}s")
-    print(
-        f"Average inference time: {(time.time() - start) / len(conditions) * 1000.0:.1f}ms"
-    )
+
+    if use_compiled:
+        results = _run_compiled_inference(
+            model_jit, conditions, args.num_layers, args.pdg_codes
+        )
+    else:
+        results = _run_checkpoint_inference(
+            sampler, conditions, args.num_layers, args.batch_size
+        )
 
     print("Saving results...")
     print(results.shape)

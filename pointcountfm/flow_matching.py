@@ -15,6 +15,8 @@ class CNF(nn.Module):
         network: Callable[[Tensor, Tensor, Tensor], Tensor],
         frequencies: int = 3,
         acceleration: float = 0.0,
+        time_weight: float = 1.0,
+        energy_weight: float = 1.0,
     ) -> None:
         super().__init__()
         self.network = network
@@ -26,6 +28,8 @@ class CNF(nn.Module):
         self.multi_loss = MultiTaskLoss(
             time_exists=network.dim_input > n,
             energy_exists=network.dim_input > 2 * n,
+            time_weight=time_weight,
+            energy_weight=energy_weight,
         )
 
     def forward(self, t: Tensor, x: Tensor, condition: Tensor) -> Tensor:
@@ -123,25 +127,35 @@ class CNF(nn.Module):
 
 
 class MultiTaskLoss(nn.Module):
-    def __init__(self, time_exists: bool = False, energy_exists: bool = False) -> None:
+    def __init__(
+        self,
+        time_exists: bool = False,
+        energy_exists: bool = False,
+        time_weight: float = 1.0,
+        energy_weight: float = 1.0,
+    ) -> None:
         super().__init__()
         self.time_exists = time_exists
         self.energy_exists = energy_exists
+        self.time_weight = time_weight
+        self.energy_weight = energy_weight
 
     def forward(self, residual: Tensor, num_layers: int) -> Tensor:
-        loss = residual[:, :num_layers].mean()
+        w = self.sigmas()
+
+        loss = w["points"] * residual[:, :num_layers].mean()
         if self.time_exists:
-            loss = loss + residual[:, num_layers : 2 * num_layers].mean()
+            loss = loss + w["time"] * residual[:, num_layers : 2 * num_layers].mean()
         if self.energy_exists:
-            loss = loss + residual[:, 2 * num_layers :].mean()
+            loss = loss + w["energy"] * residual[:, 2 * num_layers :].mean()
         return loss
 
-    def learned_sigmas(self) -> dict[str, float]:
+    def sigmas(self) -> dict[str, float]:
         sigmas = {"points": 1.0}
         if self.time_exists:
-            sigmas["time"] = 1.0
+            sigmas["time"] = self.time_weight
         if self.energy_exists:
-            sigmas["energy"] = 1.0
+            sigmas["energy"] = self.energy_weight
         return sigmas
 
 

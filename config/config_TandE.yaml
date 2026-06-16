@@ -31,6 +31,10 @@ model:
     - 1024
     - 512
 
+flow:
+  time_weight: 1.0
+  energy_weight: 1.0
+
 training:
   epochs: 1500
   optimizer:

@@ -282,9 +282,6 @@ class Trainer:
             print(f"Train loss: {train_loss:.4f}")
             print(f"Val loss: {val_loss:.4f}")
             print(f"Learning rate: {self.optimizer.param_groups[0]['lr']:.2e}")
-            sigmas = self.model.multi_loss.learned_sigmas()
-            print(f"Learned sigmas: { {k: f'{v:.3f}' for k, v in sigmas.items()} }")
-            print()
             sys.stdout.flush()
 
         print("Training finished.")
