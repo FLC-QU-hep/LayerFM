@@ -218,12 +218,15 @@ class Trainer:
         file_name = self.loss_log_distill if distill else self.loss_log
         train_losses = self.train_losses_distill if distill else self.train_losses
         val_losses = self.val_losses_distill if distill else self.val_losses
+        model = self.model_distill if distill else self.model
 
         with open(file_name, "w") as file:
             for epoch, (train_loss, val_loss) in enumerate(
                 zip(train_losses, val_losses)
             ):
                 file.write(f"{epoch + 1} {train_loss} {val_loss}\n")
+            num_params = sum(p.numel() for p in model.parameters())
+            file.write(f"# num_params: {num_params}\n")
 
     def __plot_losses(self, distill: bool = False) -> None:
         loss_plot = self.loss_plot_distill if distill else self.loss_plot

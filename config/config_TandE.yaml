@@ -1,8 +1,9 @@
-name: LayerFM_PandTandE_embeddings_multiLoss_quantile
+name: TEMPO_PandTandE_smallerEMB
 
 data:
   data_file: ../pion-clouds/files/npy_array/points_HGx9new/input_for_pcFM_withE.h5
   transform_num_points:
+    - [Dequantize, {}]
     - [Log, {alpha: 0.5}]
     - [StandardScaler, {shape: [1, 78]}]
   transform_min_time:
@@ -10,35 +11,31 @@ data:
   transform_en_perl:
     - [QuantileTransformer, {n_quantiles: 1000, shape: [1, 78]}]
   transform_inc:
+    - [Log, {alpha: 0.0}]
     - [StandardScaler, {shape: [1, 1]}]
   batch_size: 1024
   batch_size_val: 4096
   num_val: 50000
   num_classes: 0
   num_layers: 78
+  use_directions: false
+  use_labels: false
 
 model:
   name: FullyConnected
-  dim_input: 234 # [points, min_time, energy]
-  dim_condition: 5 # 3 directions + 1 energy
+  dim_input: 234 # [points, min_time, energy_per_layer]
+  dim_condition: 1 # 1 energy only
   dim_time: 6
   n_layers: 78
-  dim_embedding: 256
+  dim_embedding: 128
   hidden_dims:
     - 512
     - 1024
-    - 2048
-    - 1024
-    - 512
-
-flow:
-  time_weight: 1.0
-  energy_weight: 1.0
 
 training:
   epochs: 1500
   optimizer:
     name: Adam
-    lr: 0.0003 #0.001
+    lr: 0.0007 #0.001
   scheduler:
     name: OneCycleLR

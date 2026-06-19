@@ -1,4 +1,4 @@
-name: LayerFM_PandT_siLOGpoints_logINC_noDir_weights04
+name: TEMPO_PandT_
 
 data:
   data_file: ../pion-clouds/files/npy_array/points_HGx9new/input_for_pcFM.h5
@@ -32,15 +32,9 @@ model:
   hidden_dims:
     - 256
     - 512
-    - 1024
-    - 512
-    - 256
-
-flow:
-  time_weight: 0.4
 
 training:
-  epochs: 2000
+  epochs: 1500
   optimizer:
     name: Adam
     lr: 0.0007 #0.001
