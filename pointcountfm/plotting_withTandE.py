@@ -16,7 +16,7 @@ params = parser.parse_args()
 path = params.path
 path = path if path.endswith("/") else path + "/"
 
-name = "output_FM.h5"
+name = "output_FM_steps4.h5"
 
 # generation
 subprocess.run(
@@ -29,6 +29,8 @@ subprocess.run(
         f"{path}{name}",
         "--pdg-codes",
         "211",
+        "--steps",
+        "4",
         "--from-checkpoint",
     ]
 )

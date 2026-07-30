@@ -1,7 +1,7 @@
 name: TEMPO_P
 
 data:
-  data_file: ../pion-clouds/files/npy_array/points_HGx9new/input_for_pcFM.h5
+  data_file: ../pion-clouds/files/npy_array/points_HGx9new/input_for_pcFM_points_only.h5
   transform_num_points:
     - [Dequantize, {}]
     - [Log, {alpha: 0.5}]
@@ -14,6 +14,8 @@ data:
   num_val: 50000
   num_classes: 0
   num_layers: 78
+  use_directions: false
+  use_labels: false
 
 model:
   name: FullyConnected
