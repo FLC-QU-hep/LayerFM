@@ -41,8 +41,7 @@ class Trainer:
         self.dim_condition = self.train_loader.condition.shape[1]
 
         self.model = self.__init_model(model_config)
-        default_steps = 1 if isinstance(self.model, flow_matching.MeanFlow) else 50
-        self.steps = training_config.get("steps", default_steps)
+        self.steps = training_config.get("steps", 50)
         self.optimizer = self.__init_optimizer(training_config["optimizer"])
         self.scheduler = self.__init_scheduler(training_config.get("scheduler", {}))
 
@@ -116,7 +115,7 @@ class Trainer:
         print()
         sys.stdout.flush()
 
-    def __init_model(self, config: dict) -> flow_matching.CNF | flow_matching.MeanFlow:
+    def __init_model(self, config: dict) -> flow_matching.CNF:
         if "name" not in config:
             raise ValueError("Model configuration missing.")
         flow = flow_matching.build_flow(config)
@@ -601,8 +600,22 @@ class Trainer:
         torch.jit.save(sampler, self.compiled_path)
         print("Compiling finished.")
 
-    def __init_distill(self) -> None:
+    def __has_teacher_samples(self) -> bool:
+        """new_samples.h5 holds distillation targets only if it was written with the
+        noise and the model-space samples; the 50k evaluation samples written after
+        training share the file name but have neither."""
         if not os.path.exists(self.new_samples_path):
+            return False
+        with h5py.File(self.new_samples_path, "r") as file:
+            return "preprocessed_data" in file and "noise" in file
+
+    def __init_distill(self) -> None:
+        if not self.__has_teacher_samples():
+            if os.path.exists(self.new_samples_path):
+                print(
+                    "new_samples.h5 has no teacher samples (evaluation samples only); "
+                    "regenerating it for distillation."
+                )
             print("Sampling for distillation started.")
             sys.stdout.flush()
             cond = torch.concatenate(

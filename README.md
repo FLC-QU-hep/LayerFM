@@ -1,157 +1,248 @@
-# PointCountFM
+# LayerFM
 [![Python Version](https://img.shields.io/badge/Python_3.13-306998?logo=python&logoColor=white)](https://www.python.org/)
 [![PyTorch Version](https://img.shields.io/badge/PyTorch_2.8-ee4c2c?logo=pytorch&logoColor=white)](https://pytorch.org/)
-[![License](https://img.shields.io/badge/license-MIT-green)](https://github.com/FLC-QU-hep/PointCountFM?tab=MIT-1-ov-file)
-[![Build Status](https://img.shields.io/github/actions/workflow/status/FLC-QU-hep/PointCountFM/pre_commit.yaml?label=pre-commit&logo=github)](https://github.com/FLC-QU-hep/PointCountFM/actions/workflows/pre_commit.yaml)
-[![Tests](https://img.shields.io/github/actions/workflow/status/FLC-QU-hep/PointCountFM/test.yaml?label=tests&logo=github)](https://github.com/FLC-QU-hep/PointCountFM/actions/workflows/test.yaml)
+[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-A conditional flow matching model to generate the number of points per layer in a particle shower. The model can be used as part of a generative model for particle showers. It generates the number of points per layer in a particle shower given the incident particle type and kinematics.
+LayerFM generates the **per-layer structure of a hadronic shower** in a highly granular
+calorimeter: for each of the 78 layers, the number of points (hits) and, optionally, the
+earliest hit time in that layer, conditioned on the incident energy. It is the first
+stage of a fast point-cloud shower generator, where these per-layer quantities fix how
+many points the later stages produce and condition how they are placed.
+
+The model is a conditional flow-matching network (CNF) trained on Geant4 showers, which
+is then **distilled into a one-step student**: generation costs a single network
+evaluation instead of tens of ODE steps.
+
+LayerFM is built on [PointCountFM](https://github.com/FLC-QU-hep/PointCountFM) by
+Thorsten Buss, the point-count model of [AllShowers](https://arxiv.org/abs/2601.11716).
+It adds the per-layer minimum time as a second output channel, time-aware preprocessing,
+and a working distillation path.
 
 ## Table of Contents <!-- omit in toc -->
-- [Requirements](#requirements)
 - [Setup](#setup)
-  - [Clone repository](#clone-repository)
-  - [Install dependencies](#install-dependencies)
 - [Data](#data)
-- [Usage](#usage)
-  - [options](#options)
-- [configuration](#configuration)
-  - [model](#model)
-  - [data](#data-1)
-  - [training](#training)
-- [pre-commit](#pre-commit)
-- [Testing](#testing)
-
-
-## Requirements
-- pytorch: for training and inference of ML models
-- numpy: only as input/output data format
-- matplotlib: for visualization of data
-- h5py: for reading training data and saving generated data
-- pyyaml: for reading configuration files
-- showerdata: for handling calorimeter shower data
+- [Pipeline](#pipeline)
+  - [1. Train the CNF](#1-train-the-cnf)
+  - [2. Distill to one step](#2-distill-to-one-step)
+  - [3. Generate](#3-generate)
+  - [4. Validation plots](#4-validation-plots)
+  - [Running on a SLURM cluster](#running-on-a-slurm-cluster)
+- [Configuration](#configuration)
+- [Development](#development)
+- [Citation](#citation)
 
 ## Setup
-
-### Clone repository
-To clone the repository, run:
 ```bash
-git clone git@github.com:FLC-QU-hep/PointCountFM.git
-cd PointCountFM
+git clone git@github.com:FLC-QU-hep/LayerFM.git
+cd LayerFM
 ```
+Install the dependencies with one of:
 
-### Install dependencies
-Choose one of the following options to install the required dependencies. Only `uv` has to be tested.
-
-#### With `uv` (option 1):
+**uv** (tested):
 ```bash
 uv sync --all-groups
 source .venv/bin/activate
 ```
-
-#### With `pip` + `venv` (option 2):
+**pip + venv:**
 ```bash
-python3.13 -m venv --prompt PointCountFM .venv
+python3.13 -m venv --prompt LayerFM .venv
 source .venv/bin/activate
 pip install -e .
 pip install --group dev
 ```
-If you want to try to run the code with a different python version, you might need to adapt the `pyproject.toml` file accordingly.
-
-#### With `conda` (option 3):
+**conda:**
 ```bash
 conda env create -f environment.yaml
 conda activate PointCountFM
 pip install -e .
 ```
-All packages available from conda-forge will be installed via conda, the rest via pip.
+All commands below are run from the repository root with the environment active.
 
 ## Data
-You can use your own data or download the AllShowers dataset from Zenodo: [https://zenodo.org/records/18020348](https://zenodo.org/records/18020348)
-To download layer level shower data (1.3 GB), run:
+Training data is an HDF5 file with one row per shower:
+
+| key | shape | dtype | description |
+|---|---|---|---|
+| `energies` (or `energy`) | (n, 1) | float32 | incident energy (GeV) |
+| `num_points` | (n, 78) | int32 | number of points per layer |
+| `min_time_per_layer` (or `min_time`) | (n, 78) | float32 | earliest hit time per layer (ns); only for time models |
+| `energy_per_layer` | (n, 78) | float32 | optional third output channel |
+| `labels` | (n,) | int32 | optional particle label (with `use_labels: true`) |
+| `directions` | (n, 3) | float32 | optional incident direction (with `use_directions: true`) |
+
+The number of layers must match `num_layers` and `dim_input` in the configuration
+(`dim_input` = 78 per output channel).
+
+## Pipeline
+The full chain is train, distill, generate. Every run writes to
+`results/<YYYYmmdd_HHMMSS>_<name>/`, where `name` comes from the configuration.
+
+### 1. Train the CNF
 ```bash
-mkdir data
-curl -o data/layer_level.h5 https://zenodo.org/records/18020348/files/layer_level.h5?download=1
+python pointcountfm/trainer.py config/config_T.yaml
 ```
-If you want to use you own data, store it in HDF5 format with the following keys:
+`config/config_T.yaml` trains the points + time model; `config/config.yaml` trains the
+points-only model. Set `data.data_file` to your HDF5 file first.
 
-| key        | shape  | dtype   | description                                       |
-|------------|--------|---------|---------------------------------------------------|
-| directions | (n, 3) | float32 | incident particle directions                      |
-| energies   | (n, 1) | float32 | incident particle energies (in any consistent unit) |
-| labels     | (n)    | int32   | incident particle labels                          |
-| num_points | (n, m) | int32   | number of points per layer                        |
+The run directory then contains:
 
-n is the data set size and m is the number of layers in the calorimeter, which needs to be consistent with `dim_input` in the configuration file.
+| file | content |
+|---|---|
+| `conf.yaml` | the configuration, with `result_path` added |
+| `checkpoint.pt` | model, optimizer and scheduler state (used to resume) |
+| `compiled.pt` | self-contained TorchScript sampler (preprocessing built in) |
+| `losses.csv`, `losses.pdf` | training and validation loss |
+| `new_samples.h5` | 50 000 samples on the validation conditions (`training.num_new_samples`) |
 
-## Usage
-The main entry point is the `pointcountfm/trainer.py` script. It can be run with the following command:
+**Resuming:** pass the run's own `conf.yaml`. It carries `result_path`, so training
+continues from `checkpoint.pt` instead of starting a new run:
 ```bash
-python pointcountfm/trainer.py [options] config/config.yaml
+python pointcountfm/trainer.py results/<run>/conf.yaml
 ```
-The configuration file `config/config.yaml` specifies all hyper-parameters, preprocessing steps, and the training data. The script will train a model and save it to `results/%Y%m%d_%H%M%S_name/` where `name` is the name specified in the configuration file and `%Y%m%d_%H%M%S` is the current date and time. It also generates 50,000 samples and saves them to `results/%Y%m%d_%H%M%S_name/new_samples.h5`.
 
-### options
-| Option          | Short | Description                                             |
-|-----------------|-------|---------------------------------------------------------|
-| `--help`        | `-h`  | Show the help message                                   |
-| `--device`      | `-d`  | The device to run the model on (e.g. `cpu`, `mps`, or `cuda`) (if not specified it will be automatically selected) |
-| `--time`        | `-t`  | Run a timing test on the model                          |
-| `--fast-dev-run`|       | Run a fast development run for testing                  |
+Trainer options:
 
-## configuration
-The configuration file is a YAML with the following keys:
+| option | description |
+|---|---|
+| `-d`, `--device` | `cpu`, `cuda` or `mps` (default: automatic) |
+| `-t`, `--time` | time the sampling speed |
+| `--fast-dev-run` | tiny end-to-end run for testing |
+| `--distill` | distill the trained model (step 2) |
 
-- `model`: specifies the model architecture and hyper-parameters
-- `data`: specifies the training data and preprocessing steps
-- `training`: specifies the training hyper-parameters
-- `name`: a descriptive name for the run
+### 2. Distill to one step
+```bash
+python pointcountfm/trainer.py results/<run>/conf.yaml --distill
+```
+Distillation runs on a finished run and happens in two phases:
+1. **Teacher samples.** The CNF is integrated with 200 Heun steps on the full training +
+   validation conditioning and the result is stored in `new_samples.h5`, together with
+   the noise that produced each sample and the samples in model space. This is the most
+   expensive part (about 2 h for 1.9 M showers on one A100).
+2. **Student training.** A copy of the network learns the direct noise-to-sample map
+   for `training.epochs` epochs.
 
-### model
-| Key             | Type   | Description                                             |
-|-----------------|--------|---------------------------------------------------------|
-| `name`          | string | The model class (`FullyConnected` or `ConcatSquash`)    |
-| `dim_input`     | int    | The dimension of the input data                         |
-| `dim_condition` | int    | The dimension of the condition (number of particle labels + 3 (directions) + 1 (energies))                      |
-| `dim_time`      | int    | The dimension of the time embedding                     |
-| `hidden_dims`   | list   | A list of hidden dimensions for the model               |
+It writes `checkpoint_distill.pt`, `compiled_distill.pt`, `losses_distill.{csv,pdf}` and
+`new_samples_distilled.h5`. Re-running the same command resumes from
+`checkpoint_distill.pt` and reuses `new_samples.h5`. Only one GPU is used.
+
+### 3. Generate
+Every run directory contains `compiled.pt` (CNF teacher) and, after distillation,
+`compiled_distill.pt` (one-step student). They are self-contained TorchScript files with
+the fitted preprocessing built in, so they run without this repository or the training
+data:
+```python
+import torch
+
+model = torch.jit.load("results/<run>/compiled_distill.pt", map_location="cpu")
+energy = torch.full((1000, 1), 50.0)        # incident energy in GeV, shape (N, 1)
+with torch.no_grad():
+    num_points, min_time = model(energy)    # each (N, 78); points-only models return one tensor
+```
+The number of points comes out as a float per layer; round it to the nearest integer
+and clip at 0 before use.
+
+`pointcountfm/inference_cond_file.py` is the generation script used by the validation
+plots (step 4). It loads a checkpoint (`--from-checkpoint`, plus `--distill` for the
+student or `--steps N` for the teacher), takes the incident energies of the first N
+showers of `data.data_file` in `config/config.yaml`, with N the length of the first
+dataset in the given input file, and writes `num_points_per_layer` (and
+`min_time_per_layer`) to the `-o` file.
+
+### 4. Validation plots
+```bash
+python pointcountfm/plotting_withTandE.py results/<run> --distill   # student
+python pointcountfm/plotting_withTandE.py results/<run> --steps 30  # teacher, 30 steps
+```
+This generates 20 000 showers and writes to `results/<run>/plots/`: the total number of
+points, the number of points at 20, 50 and 80 GeV, the longitudinal profile with a
+Generated/Geant4 ratio panel and, for time models, the minimum time per layer. The
+Geant4 comparison file is set inside the script. Delete an existing
+`output_FM_*.h5` before re-plotting the same setting, otherwise the old file is plotted.
+
+### Running on a SLURM cluster
+The commands above run unchanged inside a batch job. For example, training on one GPU:
+```bash
+sbatch --gres=gpu:1 --time=1-12:00:00 --job-name=LayerFM-train \
+    --wrap "source .venv/bin/activate && python pointcountfm/trainer.py config/config_T.yaml"
+```
+and distillation of a finished run:
+```bash
+sbatch --gres=gpu:1 --time=1-00:00:00 --job-name=LayerFM-distill \
+    --wrap "source .venv/bin/activate && python pointcountfm/trainer.py results/<run>/conf.yaml --distill"
+```
+Adapt the partition and GPU options to your cluster. Distillation takes about 6 h on
+one A100. A job that hits its time limit
+can be resubmitted with the run's `conf.yaml`; both training and distillation resume
+from their checkpoints.
+
+## Configuration
+A configuration file has four top-level keys: `name`, `data`, `model` and `training`.
+See `config/config_T.yaml` for a complete example.
 
 ### data
-| Key             | Type   | Description                                             |
-|-----------------|--------|---------------------------------------------------------|
-| `data_file`     | string | The path to the training data                           |
-| `batch_size`    | int    | The batch size for training                             |
-| `batch_size_val`| int    | The batch size for validation                           |
-|`transform_num_points`| list | A list of the preprocessing steps for the number of points per layer (optional) |
-| `transform_inc` | list   | A list of the preprocessing steps for the incident energy (optional) |
+| key | description |
+|---|---|
+| `data_file` | path to the training HDF5 file |
+| `batch_size`, `batch_size_val` | training and validation batch size |
+| `num_val` | number of showers held out for validation |
+| `num_layers` | number of calorimeter layers (78) |
+| `num_classes` | number of particle classes (0 = no labels) |
+| `use_labels`, `use_directions` | add particle label / direction to the condition |
+| `transform_num_points` | preprocessing for the points per layer, e.g. `Dequantize`, `Log`, `StandardScaler` |
+| `transform_min_time` | preprocessing for the minimum time, e.g. `QuantileTransformer` |
+| `transform_en_perl` | preprocessing for the energy per layer |
+| `transform_inc` | preprocessing for the incident energy |
+
+### model
+| key | description |
+|---|---|
+| `name` | network class: `FullyConnected` or `ConcatSquash` |
+| `dim_input` | 78 x number of output channels (78, 156 or 234) |
+| `dim_condition` | size of the condition: 1 (energy) + labels + 3 (directions) |
+| `dim_time` | size of the flow-time embedding |
+| `n_layers`, `dim_embedding` | number of layers and size of the per-layer embedding |
+| `hidden_dims` | widths of the hidden blocks |
 
 ### training
-| Key             | Type   | Description                                             |
-|-----------------|--------|---------------------------------------------------------|
-| `epochs`        | int    | The number of epochs to train the model                 |
-| `optimizer`     | dict   | The optimizer (`name` key) and its hyper-parameters     |
-| `scheduler`     | dict   | The learning rate scheduler (`name` key) and its hyper-parameters (optional) |
+| key | description |
+|---|---|
+| `epochs` | number of epochs (also used for the distillation student) |
+| `optimizer` | `name` (e.g. `Adam`) and its arguments |
+| `scheduler` | `name` (e.g. `OneCycleLR`, `CosineAnnealing`) and its arguments; the total number of steps is computed automatically |
+| `steps` | Heun steps used when sampling the teacher (default 50) |
+| `num_new_samples` | samples written after training (default 50 000) |
 
-If you use OneCycleLR or CosineAnnealing as a scheduler, the maximum number of iterations is calculated automatically.
-
-For an example configuration file, see `config/config.yaml`.
-
-## pre-commit
-This repository uses [pre-commit](https://pre-commit.com) to run checks on the code before committing. To install pre-commit, run:
+## Development
+Checks run with [pre-commit](https://pre-commit.com):
 ```bash
 pre-commit install
-```
-This will install pre-commit and set up the checks. If you want to run the checks manually, you can run:
-```bash
 pre-commit run --all-files
 ```
-This will run all checks on all files.
-
-## Testing
-To run the unit tests, run:
+Unit tests:
 ```bash
 python -m unittest discover -s test -p "*_test.py" -v
 ```
 
+## Citation
+If you use LayerFM, please cite the paper that introduces it:
+```bibtex
+@article{LayerFM,
+    author = {Mozzanica, Martina and others},
+    title  = {<paper title>},
+    year   = {2026}
+}
+```
+and PointCountFM / AllShowers, on which it is based:
+```bibtex
+@article{Buss:2026yrf,
+    author  = {Buss, Thorsten and Day-Hall, Henry and Gaede, Frank and Kasieczka, Gregor and Kr{\"u}ger, Katja},
+    title   = {{AllShowers: One model for all calorimeter showers}},
+    eprint  = {2601.11716},
+    archivePrefix = {arXiv},
+    primaryClass  = {physics.ins-det},
+    year    = {2026}
+}
+```
+
 ---
-If you have any questions or comments about this repository, please contact [thorsten.buss@uni-hamburg.de](mailto:thorsten.buss@uni-hamburg.de).
+Questions and comments: [martina.mozzanica@uni-hamburg.de](mailto:martina.mozzanica@uni-hamburg.de).

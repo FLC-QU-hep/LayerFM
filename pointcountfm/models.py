@@ -11,14 +11,6 @@ class _Block(nn.Module):
     """
     Pre-norm MLP block with optional context (time + condition) injection.
     Uses a residual connection when input and output dims are equal.
-
-    conditioning : how the context enters the block.
-        'additive' (default) projects it to d_out and adds it before the activation.
-        'adaln' uses adaLN-Zero (Peebles & Xie, and the MeanFlow paper's DiT blocks):
-        the context produces a shift and scale that modulate the normalized input and
-        a gate on the block output. The projection is zero-initialised, so a residual
-        block starts as the identity and the context is given a path whose strength
-        the network learns, rather than a fixed additive offset.
     """
 
     def __init__(
@@ -28,52 +20,25 @@ class _Block(nn.Module):
         context_dim: int,
         activation: type[nn.Module],
         dropout: float,
-        conditioning: str = "additive",
     ) -> None:
         super().__init__()
-        if conditioning not in ("additive", "adaln"):
-            raise ValueError(
-                f"Unknown conditioning {conditioning!r}; choices: 'additive', 'adaln'."
-            )
-        self.d_in = d_in
-        self.d_out = d_out
         self.is_residual = d_in == d_out
         self.norm = nn.LayerNorm(d_in)
         self.linear = nn.Linear(d_in, d_out)
         self.act = activation()
-        self.context_proj = None
-        self.ada_proj = None
-        if context_dim > 0:
-            if conditioning == "adaln":
-                self.ada_proj = nn.Linear(context_dim, 2 * d_in + d_out)
-                nn.init.zeros_(self.ada_proj.weight)
-                nn.init.zeros_(self.ada_proj.bias)
-                if not self.is_residual:
-                    # a zero gate on a block that changes width has no skip to fall
-                    # back on, so it would emit a constant 0; start that gate open
-                    with torch.no_grad():
-                        self.ada_proj.bias[2 * d_in :].fill_(1.0)
-            else:
-                # projects context into the hidden dim and adds it before the activation
-                self.context_proj = nn.Linear(context_dim, d_out, bias=False)
+        # projects context into the hidden dimension and adds it before the activation
+        self.context_proj = (
+            nn.Linear(context_dim, d_out, bias=False) if context_dim > 0 else None
+        )
         self.drop = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
 
     def forward(
         self, x: torch.Tensor, context: torch.Tensor | None = None
     ) -> torch.Tensor:
-        h = self.norm(x)
-        gate = None
-        if self.ada_proj is not None and context is not None:
-            shift, scale, gate = self.ada_proj(context).split(
-                [self.d_in, self.d_in, self.d_out], dim=-1
-            )
-            h = h * (1 + scale) + shift
-        h = self.linear(h)
+        h = self.linear(self.norm(x))
         if self.context_proj is not None and context is not None:
             h = h + self.context_proj(context)
         h = self.drop(self.act(h))
-        if gate is not None:
-            h = gate * h
         return (x + h) if self.is_residual else h
 
 
@@ -99,7 +64,6 @@ class FullyConnected(nn.Module):
     hidden_dims   : width of each backbone block; same dim → residual connection
     activation    : pointwise activation class
     dropout       : dropout probability (0 = disabled)
-    conditioning  : 'additive' or 'adaln', see _Block
     """
 
     def __init__(
@@ -112,7 +76,6 @@ class FullyConnected(nn.Module):
         hidden_dims: list[int] | None = None,
         activation: type[nn.Module] = nn.SiLU,
         dropout: float = 0.0,
-        conditioning: str = "additive",
     ) -> None:
         super().__init__()
         self.dim_input = dim_input
@@ -166,7 +129,7 @@ class FullyConnected(nn.Module):
 
         self.blocks = nn.ModuleList(
             [
-                _Block(d_in, d_out, eff_context_dim, activation, dropout, conditioning)
+                _Block(d_in, d_out, eff_context_dim, activation, dropout)
                 for d_in, d_out in [(hidden_dims[0], hidden_dims[0])]
                 + list(zip(hidden_dims, hidden_dims[1:]))
             ]

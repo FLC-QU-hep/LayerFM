@@ -70,8 +70,7 @@ def parse_args(args: list[str] | None = None):
         "--steps",
         type=int,
         default=50,
-        help="Number of ODE integration steps (MeanFlow: sampling steps, 1 is enough). "
-        "Only used with --from-checkpoint.",
+        help="Number of ODE integration steps. Only used with --from-checkpoint.",
     )
     parser.add_argument(
         "--distill",
@@ -183,7 +182,7 @@ def load_from_checkpoint(
 
     data_cfg = cfg["data"].copy()
 
-    # Build CNF or MeanFlow (model.flow.type) from config
+    # Build the CNF from config
     flow = flow_matching.build_flow(cfg["model"])
 
     # Load weights
