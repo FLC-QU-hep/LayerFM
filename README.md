@@ -6,6 +6,8 @@
 [![pre-commit](https://img.shields.io/github/actions/workflow/status/Mmozzanica5/LayerFM/pre_commit.yaml?label=pre-commit&logo=github)](https://github.com/Mmozzanica5/LayerFM/actions/workflows/pre_commit.yaml)
 [![Tests](https://img.shields.io/github/actions/workflow/status/Mmozzanica5/LayerFM/test.yaml?label=tests&logo=github)](https://github.com/Mmozzanica5/LayerFM/actions/workflows/test.yaml)
 
+**Authors:** Martina Mozzanica, Thorsten Buss
+
 LayerFM generates the **per-layer structure of a hadronic shower** in a highly granular
 calorimeter: for each of the 78 layers, the number of points (hits) and, optionally, the
 earliest hit time in that layer, conditioned on the incident energy. It is the first
@@ -208,15 +210,7 @@ python -m unittest discover -s test -p "*_test.py" -v
 ```
 
 ## Citation
-If you use LayerFM, please cite the paper that introduces it:
-```bibtex
-@article{LayerFM,
-    author = {Mozzanica, Martina and Buss, Thorsten},
-    title  = {<paper title>},
-    year   = {2026}
-}
-```
-and the works it builds on, CaloHadronic and PointCountFM / AllShowers:
+If you use LayerFM, please cite the works it builds on, CaloHadronic and PointCountFM / AllShowers:
 ```bibtex
 @article{Buss:2025cyw,
     author  = {Buss, Thorsten and Gaede, Frank and Kasieczka, Gregor and Korol, Anatolii and Kr{\"u}ger, Katja and McKeown, Peter and Mozzanica, Martina},
