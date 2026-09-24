@@ -2,6 +2,8 @@
 [![Python Version](https://img.shields.io/badge/Python_3.13-306998?logo=python&logoColor=white)](https://www.python.org/)
 [![PyTorch Version](https://img.shields.io/badge/PyTorch_2.8-ee4c2c?logo=pytorch&logoColor=white)](https://pytorch.org/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![pre-commit](https://img.shields.io/github/actions/workflow/status/Mmozzanica5/LayerFM/pre_commit.yaml?label=pre-commit&logo=github)](https://github.com/Mmozzanica5/LayerFM/actions/workflows/pre_commit.yaml)
+[![Tests](https://img.shields.io/github/actions/workflow/status/Mmozzanica5/LayerFM/test.yaml?label=tests&logo=github)](https://github.com/Mmozzanica5/LayerFM/actions/workflows/test.yaml)
 
 LayerFM generates the **per-layer structure of a hadronic shower** in a highly granular
 calorimeter: for each of the 78 layers, the number of points (hits) and, optionally, the
@@ -13,8 +15,10 @@ The model is a conditional flow-matching network (CNF) trained on Geant4 showers
 is then **distilled into a one-step student**: generation costs a single network
 evaluation instead of tens of ODE steps.
 
-LayerFM is built on [PointCountFM](https://github.com/FLC-QU-hep/PointCountFM) by
-Thorsten Buss, the point-count model of [AllShowers](https://arxiv.org/abs/2601.11716).
+Generating the per-layer point counts as a separate first stage was introduced in
+[CaloHadronic](https://doi.org/10.1088/1748-0221/21/01/P01042) (Buss et al., JINST 21
+(2026) P01042). LayerFM is built on [PointCountFM](https://github.com/FLC-QU-hep/PointCountFM)
+by Thorsten Buss, the point-count model of [AllShowers](https://arxiv.org/abs/2601.11716).
 It adds the per-layer minimum time as a second output channel, time-aware preprocessing,
 and a working distillation path.
 
@@ -26,7 +30,6 @@ and a working distillation path.
   - [2. Distill to one step](#2-distill-to-one-step)
   - [3. Generate](#3-generate)
   - [4. Validation plots](#4-validation-plots)
-  - [Running on a SLURM cluster](#running-on-a-slurm-cluster)
 - [Configuration](#configuration)
 - [Development](#development)
 - [Citation](#citation)
@@ -159,22 +162,6 @@ Generated/Geant4 ratio panel and, for time models, the minimum time per layer. T
 Geant4 comparison file is set inside the script. Delete an existing
 `output_FM_*.h5` before re-plotting the same setting, otherwise the old file is plotted.
 
-### Running on a SLURM cluster
-The commands above run unchanged inside a batch job. For example, training on one GPU:
-```bash
-sbatch --gres=gpu:1 --time=1-12:00:00 --job-name=LayerFM-train \
-    --wrap "source .venv/bin/activate && python pointcountfm/trainer.py config/config_T.yaml"
-```
-and distillation of a finished run:
-```bash
-sbatch --gres=gpu:1 --time=1-00:00:00 --job-name=LayerFM-distill \
-    --wrap "source .venv/bin/activate && python pointcountfm/trainer.py results/<run>/conf.yaml --distill"
-```
-Adapt the partition and GPU options to your cluster. Distillation takes about 6 h on
-one A100. A job that hits its time limit
-can be resubmitted with the run's `conf.yaml`; both training and distillation resume
-from their checkpoints.
-
 ## Configuration
 A configuration file has four top-level keys: `name`, `data`, `model` and `training`.
 See `config/config_T.yaml` for a complete example.
@@ -213,7 +200,9 @@ See `config/config_T.yaml` for a complete example.
 | `num_new_samples` | samples written after training (default 50 000) |
 
 ## Development
-Checks run with [pre-commit](https://pre-commit.com):
+Every push runs two GitHub Actions workflows (`.github/workflows/`): `pre-commit`, and
+`tests`, which runs the unit tests and a fast training + distillation run on a small
+public sample. Locally, checks run with [pre-commit](https://pre-commit.com):
 ```bash
 pre-commit install
 pre-commit run --all-files
@@ -227,12 +216,27 @@ python -m unittest discover -s test -p "*_test.py" -v
 If you use LayerFM, please cite the paper that introduces it:
 ```bibtex
 @article{LayerFM,
-    author = {Mozzanica, Martina and others},
+    author = {Mozzanica, Martina and Buss, Thorsten},
     title  = {<paper title>},
     year   = {2026}
 }
 ```
-and PointCountFM / AllShowers, on which it is based:
+and the works it builds on, CaloHadronic and PointCountFM / AllShowers:
+```bibtex
+@article{Buss:2025cyw,
+    author  = {Buss, Thorsten and Gaede, Frank and Kasieczka, Gregor and Korol, Anatolii and Kr{\"u}ger, Katja and McKeown, Peter and Mozzanica, Martina},
+    title   = {{CaloHadronic: a diffusion model for the generation of hadronic showers}},
+    eprint  = {2506.21720},
+    archivePrefix = {arXiv},
+    primaryClass  = {physics.ins-det},
+    doi     = {10.1088/1748-0221/21/01/P01042},
+    journal = {JINST},
+    volume  = {21},
+    number  = {01},
+    pages   = {P01042},
+    year    = {2026}
+}
+```
 ```bibtex
 @article{Buss:2026yrf,
     author  = {Buss, Thorsten and Day-Hall, Henry and Gaede, Frank and Kasieczka, Gregor and Kr{\"u}ger, Katja},

@@ -23,5 +23,10 @@ jobs:
           curl -o data/layer_level.h5 https://syncandshare.desy.de/public.php/dav/files/3ejTeJZzZP4BGpX
       - name: Test with Unittest
         run: python -m unittest discover --verbose  -s test -p '*_test.py'
+      - name: Use the downloaded sample as training data
+        run: |
+          sed -i 's#data_file: .*#data_file: data/layer_level.h5#' config/config.yaml
       - name: Fast development run
         run: python pointcountfm/trainer.py --time --fast-dev-run --device cpu config/config.yaml
+      - name: Fast distillation run
+        run: python pointcountfm/trainer.py --fast-dev-run --distill --device cpu results/test/conf.yaml

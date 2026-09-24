@@ -6,7 +6,8 @@ readme = "README.md"
 requires-python = ">=3.13, <3.14"
 license = "MIT"
 authors = [
-    {name = "Thorsten Buss", email = "thorsten.buss@uni-hamburg.de"}
+    {name = "Martina Mozzanica", email = "martina.mozzanica@uni-hamburg.de"},
+    {name = "Thorsten Buss", email = "thorsten.buss@uni-hamburg.de"},
 ]
 keywords = ["machine learning", "flow matching", "particle physics", "pytorch"]
 classifiers = [
