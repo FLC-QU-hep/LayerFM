@@ -41,25 +41,10 @@ and a working distillation path.
 git clone git@github.com:FLC-QU-hep/LayerFM.git
 cd LayerFM
 ```
-Install the dependencies with one of:
-
-**uv** (tested):
+Install the dependencies with uv:
 ```bash
 uv sync --all-groups
 source .venv/bin/activate
-```
-**pip + venv:**
-```bash
-python3.13 -m venv --prompt LayerFM .venv
-source .venv/bin/activate
-pip install -e .
-pip install --group dev
-```
-**conda:**
-```bash
-conda env create -f environment.yaml
-conda activate LayerFM
-pip install -e .
 ```
 All commands below are run from the repository root with the environment active.
 
