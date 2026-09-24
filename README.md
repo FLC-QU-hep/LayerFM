@@ -2,6 +2,7 @@
 [![Python Version](https://img.shields.io/badge/Python_3.13-306998?logo=python&logoColor=white)](https://www.python.org/)
 [![PyTorch Version](https://img.shields.io/badge/PyTorch_2.8-ee4c2c?logo=pytorch&logoColor=white)](https://pytorch.org/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![Hugging Face](https://img.shields.io/badge/%F0%9F%A4%97_weights-mmozzani%2FLayerFM-yellow)](https://huggingface.co/mmozzani/LayerFM)
 [![pre-commit](https://img.shields.io/github/actions/workflow/status/Mmozzanica5/LayerFM/pre_commit.yaml?label=pre-commit&logo=github)](https://github.com/Mmozzanica5/LayerFM/actions/workflows/pre_commit.yaml)
 [![Tests](https://img.shields.io/github/actions/workflow/status/Mmozzanica5/LayerFM/test.yaml?label=tests&logo=github)](https://github.com/Mmozzanica5/LayerFM/actions/workflows/test.yaml)
 
@@ -24,6 +25,7 @@ and a working distillation path.
 
 ## Table of Contents <!-- omit in toc -->
 - [Setup](#setup)
+- [Pretrained weights](#pretrained-weights)
 - [Data](#data)
 - [Pipeline](#pipeline)
   - [1. Train the CNF](#1-train-the-cnf)
@@ -60,6 +62,31 @@ conda activate LayerFM
 pip install -e .
 ```
 All commands below are run from the repository root with the environment active.
+
+## Pretrained weights
+The trained models are on Hugging Face: [huggingface.co/mmozzani/LayerFM](https://huggingface.co/mmozzani/LayerFM).
+
+| Folder | Output per layer |
+|---|---|
+| `points_time/` | number of points + minimum hit time |
+| `points_only/` | number of points |
+
+Each folder holds the distilled one-step student (`compiled_distill.pt`, recommended), the
+CNF teacher (`compiled.pt`, 50 Heun steps), both checkpoints and the training
+configuration. The `compiled*.pt` files are self-contained TorchScript with the
+preprocessing built in, so they need only PyTorch:
+```python
+import torch
+from huggingface_hub import hf_hub_download
+
+path = hf_hub_download("mmozzani/LayerFM", "points_time/compiled_distill.pt")
+model = torch.jit.load(path, map_location="cpu")
+
+energy = torch.full((1000, 1), 50.0)       # incident energy in GeV, shape (N, 1)
+with torch.no_grad():
+    num_points, min_time = model(energy)   # each (N, 78)
+```
+The models are valid for single π⁺ at normal incidence on the ILD calorimeter, 10–90 GeV.
 
 ## Data
 Training data is an HDF5 file with one row per shower:
