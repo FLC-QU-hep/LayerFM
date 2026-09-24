@@ -12,27 +12,42 @@ from scipy.stats import binned_statistic
 
 parser = argparse.ArgumentParser()
 parser.add_argument("path", type=str, help="Path to the result folder.")
+parser.add_argument(
+    "--steps",
+    type=int,
+    default=4,
+    help="Number of sampling steps (NFE) used for the generation.",
+)
+parser.add_argument(
+    "--distill",
+    action="store_true",
+    help="Plot the distilled one-step student (checkpoint_distill.pt) instead of the teacher.",
+)
 params = parser.parse_args()
 path = params.path
 path = path if path.endswith("/") else path + "/"
 
-name = "output_FM_steps4.h5"
+checkpoint = "checkpoint_distill.pt" if params.distill else "checkpoint.pt"
+name = (
+    "output_FM_distilled.h5" if params.distill else f"output_FM_steps{params.steps}.h5"
+)
 
 # generation
 subprocess.run(
     [
         "python",
         "pointcountfm/inference_cond_file.py",
-        f"{path}checkpoint.pt",
+        f"{path}{checkpoint}",
         "../pion-clouds/dataset/hdf5_HGx9new/all_interactions_pions_regular_ECAL+HCAL_10-90GeV_10.slcio.root_with_time.hdf5",
         "-o",
         f"{path}{name}",
         "--pdg-codes",
         "211",
         "--steps",
-        "4",
+        str(params.steps),
         "--from-checkpoint",
     ]
+    + (["--distill"] if params.distill else [])
 )
 
 
@@ -188,6 +203,62 @@ plot_num_points_multi_energy(
     name,
     energies=[20, 50, 80],
 )
+
+# ── Longitudinal profile ──────────────────────────────────────────────────────
+layers = np.arange(g4_data_points.shape[1])
+g4_profile = g4_data_points.mean(axis=0)
+gen_profile = gen_data_points.mean(axis=0)
+g4_profile_sem = g4_data_points.std(axis=0) / np.sqrt(g4_data_points.shape[0])
+gen_profile_sem = gen_data_points.std(axis=0) / np.sqrt(gen_data_points.shape[0])
+
+fig, (ax, ax_ratio) = plt.subplots(
+    2,
+    1,
+    figsize=(7, 6),
+    sharex=True,
+    gridspec_kw={"height_ratios": [3, 1], "hspace": 0.05},
+)
+ax.plot(layers, g4_profile, color="black", linewidth=2, label="Geant4")
+ax.fill_between(
+    layers,
+    g4_profile - g4_profile_sem,
+    g4_profile + g4_profile_sem,
+    color="black",
+    alpha=0.2,
+)
+ax.plot(layers, gen_profile, color="purple", linewidth=2, label="Generated")
+ax.fill_between(
+    layers,
+    gen_profile - gen_profile_sem,
+    gen_profile + gen_profile_sem,
+    color="purple",
+    alpha=0.2,
+)
+# the first 30 layers are the ECAL, the rest the HCAL
+n_ecal = 30
+for axis in (ax, ax_ratio):
+    axis.axvline(n_ecal - 0.5, color="gray", linestyle=":", linewidth=1)
+ax.text(
+    n_ecal - 1.5, ax.get_ylim()[1] * 0.95, "ECAL", ha="right", va="top", color="gray"
+)
+ax.text(
+    n_ecal + 0.5, ax.get_ylim()[1] * 0.95, "HCAL", ha="left", va="top", color="gray"
+)
+ax.set_ylabel("Mean Num Points per Layer")
+ax.set_title("Longitudinal Profile")
+ax.legend()
+
+ratio = np.divide(
+    gen_profile, g4_profile, out=np.full_like(gen_profile, np.nan), where=g4_profile > 0
+)
+ax_ratio.plot(layers, ratio, color="purple", linewidth=2)
+ax_ratio.axhline(1.0, color="black", linestyle="--", linewidth=1)
+ax_ratio.set_ylabel("Gen / Geant4")
+ax_ratio.set_xlabel("Layer")
+ax_ratio.set_ylim(0, 2)
+plt.tight_layout()
+plt.savefig(path + f"plots/{name.split('.')[0]}_longitudinal.png")
+plt.close()
 
 # ── Min time per layer ────────────────────────────────────────────────────────
 if "min_time_per_layer" in geant4_pl and "min_time_per_layer" in generated_pl:

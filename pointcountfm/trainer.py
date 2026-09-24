@@ -16,7 +16,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 import yaml
 
-from pointcountfm import flow_matching, models
+from pointcountfm import flow_matching
 from pointcountfm.data_loader import DataLoader, get_loaders
 from pointcountfm.preprocessing import Transformation
 
@@ -39,9 +39,10 @@ class Trainer:
         self.data_config = data_config
         self.dim_data = self.train_loader.data.shape[1]
         self.dim_condition = self.train_loader.condition.shape[1]
-        self.steps = training_config.get("steps", 50)
 
         self.model = self.__init_model(model_config)
+        default_steps = 1 if isinstance(self.model, flow_matching.MeanFlow) else 50
+        self.steps = training_config.get("steps", default_steps)
         self.optimizer = self.__init_optimizer(training_config["optimizer"])
         self.scheduler = self.__init_scheduler(training_config.get("scheduler", {}))
 
@@ -115,15 +116,10 @@ class Trainer:
         print()
         sys.stdout.flush()
 
-    def __init_model(self, config: dict) -> flow_matching.CNF:
-        config = config.copy()
+    def __init_model(self, config: dict) -> flow_matching.CNF | flow_matching.MeanFlow:
         if "name" not in config:
             raise ValueError("Model configuration missing.")
-        flow_config = config.pop("flow") if "flow" in config else {}
-        model_name = config.pop("name")
-        model_class = getattr(models, model_name)
-        model_object = model_class(**config)
-        flow = flow_matching.CNF(model_object, **flow_config)
+        flow = flow_matching.build_flow(config)
         return flow.to(self.device)
 
     def __init_optimizer(self, config: dict) -> optim.Optimizer:
@@ -625,6 +621,10 @@ class Trainer:
         data_config = self.data_config.copy()
         data_config["data_file"] = self.new_samples_path
         data_config["load_noise"] = True
+        # Distill against the teacher's own model-space outputs, not the physical-space
+        # samples re-transformed: the forward transforms are not invertible here
+        # (Dequantize re-draws its noise), which would corrupt the regression target.
+        data_config["use_preprocessed"] = True
         self.train_loader_distill, self.val_loader_distill = get_loaders(**data_config)
         self.train_loader_distill.to(self.device)
         self.val_loader_distill.to(self.device)
@@ -706,13 +706,21 @@ class Trainer:
                 model: flow_matching.Distilled,
                 transform_inc: Transformation,
                 transform_num_points: Transformation,
+                transform_min_time: Transformation,
+                transfrom_en_perl: Transformation,
                 dim_data: int,
+                num_layers: int,
             ) -> None:
                 super().__init__()
                 self.model = model
                 self.transform_inc = transform_inc
                 self.transform_num_points = transform_num_points
+                self.transform_min_time = transform_min_time
+                self.transform_en_perl = transfrom_en_perl
                 self.dim_data = dim_data
+                self.num_layers = num_layers
+                self.use_time = dim_data > num_layers
+                self.use_enperl = dim_data > 2 * num_layers
 
             def forward(self, condition: torch.Tensor) -> torch.Tensor:
                 condition = torch.clone(condition)
@@ -720,14 +728,26 @@ class Trainer:
                 samples = self.model.sample(
                     (condition.shape[0], self.dim_data), condition
                 )
-                samples = self.transform_num_points.inverse(samples)
-                return samples
+                n = self.num_layers
+                result = [self.transform_num_points.inverse(samples[:, :n])]
+                if self.use_time:
+                    result.append(
+                        self.transform_min_time.inverse(samples[:, n : n * 2])
+                    )
+                if self.use_enperl:
+                    result.append(
+                        self.transform_en_perl.inverse(samples[:, n * 2 : n * 3])
+                    )
+                return result
 
         sampler = SamplerDistill(
             model=self.model_distill,
             transform_inc=self.train_loader.transform_inc,
             transform_num_points=self.train_loader.transform_num_points,
+            transform_min_time=self.train_loader.transform_min_time,
+            transfrom_en_perl=self.train_loader.transform_en_perl,
             dim_data=self.dim_data,
+            num_layers=self.data_config["num_layers"],
         )
         sampler = copy.deepcopy(sampler)
         sampler = sampler.to("cpu")

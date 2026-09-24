@@ -32,16 +32,24 @@ def load_data_file(
     end: int | None = None,
     load_noise: bool = False,
     num_classes: int = 0,
+    use_preprocessed: bool = False,
 ) -> tuple[Tensor, Tensor, Tensor | None, Tensor | None, Tensor | None, Tensor | None]:
     with h5py.File(data_file, "r") as file:
+        if use_preprocessed:
+            # Teacher outputs in model space, as written by sample_and_save with
+            # save_noise=True. They are already transformed and paired with the exact
+            # noise that produced them, so the caller must not transform them again:
+            # round-tripping through physical space re-draws the Dequantize noise and
+            # breaks the noise -> sample pairing that distillation regresses.
+            data = load_dataset(file, "preprocessed_data", start, end)
+            condition = load_dataset(file, "preprocessed_energy", start, end)
+            noise = load_dataset(file, "noise", start, end)
+            return condition, data, None, None, noise, None, None
         energy_key = "energy" if "energy" in file else "energies"
         e_incident = load_dataset(file, energy_key, start, end)
         num_points = load_dataset(file, "num_points", start, end)
-        mint = (
-            load_dataset(file, "min_time_per_layer", start, end)
-            if "min_time_per_layer" in file
-            else None
-        )
+        time_key = "min_time_per_layer" if "min_time_per_layer" in file else "min_time"
+        mint = load_dataset(file, time_key, start, end) if time_key in file else None
         en_perl = (
             load_dataset(file, "energy_per_layer", start, end)
             if "energy_per_layer" in file
@@ -151,14 +159,25 @@ def load_data(
     end: int | None = None,
     load_noise: bool = False,
     num_classes: int = 0,
+    use_preprocessed: bool = False,
 ) -> tuple[Tensor, Tensor, Tensor | None, Tensor | None, Tensor | None]:
     if os.path.isdir(data_file):
+        if use_preprocessed:
+            raise ValueError(
+                "use_preprocessed expects the single HDF5 file written by "
+                "sample_and_save, not a directory."
+            )
         return load_data_directory(
             data_file, start, end, load_noise, num_classes=num_classes
         )
     elif os.path.isfile(data_file):
         return load_data_file(
-            data_file, start, end, load_noise, num_classes=num_classes
+            data_file,
+            start,
+            end,
+            load_noise,
+            num_classes=num_classes,
+            use_preprocessed=use_preprocessed,
         )
     else:
         raise ValueError(
@@ -185,6 +204,7 @@ class DataLoader:
         num_layers: int = 78,
         use_directions: bool = True,
         use_labels: bool = True,
+        use_preprocessed: bool = False,
     ) -> None:
         self.data_file = data_file
         self.transform_inc = self.__compose_trafo(transform_inc)
@@ -201,9 +221,12 @@ class DataLoader:
             end=end,
             load_noise=load_noise,
             num_classes=num_classes,
+            use_preprocessed=use_preprocessed,
         )
         self.num_samples = len(e_incident)
-        if labels is not None:
+        # number of class columns in the condition: none without use_labels, even if
+        # the file has labels
+        if labels is not None and use_labels:
             self.num_classes = labels.shape[1]
         else:
             self.num_classes = 0
@@ -223,7 +246,11 @@ class DataLoader:
         if directions is not None:
             directions = directions.to(device)
 
-        if fit_transform:
+        if use_preprocessed:
+            # Already in model space: data and condition are the teacher's own
+            # tensors, so no transform is fitted or applied here.
+            pass
+        elif fit_transform:
             e_incident = self.transform_inc.fit(e_incident)
             active_mask = (
                 num_points > 0
@@ -309,6 +336,7 @@ def get_loaders(
     num_layers: int = 78,
     use_directions: bool = True,
     use_labels: bool = True,
+    use_preprocessed: bool = False,
 ) -> tuple[DataLoader, DataLoader]:
     if num_train is None:
         num_train = -num_val
@@ -331,6 +359,7 @@ def get_loaders(
         num_layers=num_layers,
         use_directions=use_directions,
         use_labels=use_labels,
+        use_preprocessed=use_preprocessed,
     )
     test_loader = DataLoader(
         data_file,
@@ -349,5 +378,6 @@ def get_loaders(
         num_layers=num_layers,
         use_directions=use_directions,
         use_labels=use_labels,
+        use_preprocessed=use_preprocessed,
     )
     return train_loader, test_loader

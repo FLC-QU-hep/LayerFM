@@ -31,6 +31,11 @@ model:
   hidden_dims:
     - 512
     - 1024
+  flow:
+    # cnf: conditional flow matching, Heun sampling (training.steps default 50)
+    # mean_flow: MeanFlow, samples in one step (training.steps default 1); options
+    #   (defaults): ratio_r_neq_t 0.5, adaptive_p 1.0, adaptive_c 1e-3
+    type: cnf # [cnf, mean_flow]
 
 training:
   epochs: 1500

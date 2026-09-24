@@ -70,7 +70,16 @@ def parse_args(args: list[str] | None = None):
         "--steps",
         type=int,
         default=50,
-        help="Number of ODE integration steps. Only used with --from-checkpoint.",
+        help="Number of ODE integration steps (MeanFlow: sampling steps, 1 is enough). "
+        "Only used with --from-checkpoint.",
+    )
+    parser.add_argument(
+        "--distill",
+        action="store_true",
+        help=(
+            "Load a distilled one-step student (checkpoint_distill.pt) instead of the "
+            "teacher. Only used with --from-checkpoint; --steps is ignored."
+        ),
     )
     parser.add_argument(
         "--batch-size",
@@ -134,11 +143,30 @@ class _CheckpointSampler(nn.Module):
         return result
 
 
+class _DistilledFlow(nn.Module):
+    """Gives Distilled the flow.sample(shape, steps, condition=...) signature.
+
+    The student is a single noise -> data map, so `steps` is accepted and ignored.
+    """
+
+    def __init__(self, student: nn.Module) -> None:
+        super().__init__()
+        self.student = student
+
+    def sample(
+        self, shape: tuple[int, int], steps: int, condition: torch.Tensor
+    ) -> torch.Tensor:
+        return self.student.sample(shape, condition)
+
+
 def load_from_checkpoint(
-    model_path: str, config_path: str | None = None, steps: int = 50
+    model_path: str,
+    config_path: str | None = None,
+    steps: int = 50,
+    distill: bool = False,
 ) -> _CheckpointSampler:
     """Rebuild a _CheckpointSampler from checkpoint.pt + conf.yaml."""
-    from pointcountfm import flow_matching, models
+    from pointcountfm import flow_matching
     from pointcountfm.data_loader import get_loaders
 
     config_dir = os.path.dirname(os.path.abspath(model_path))
@@ -153,19 +181,23 @@ def load_from_checkpoint(
     with open(config_path) as f:
         cfg = yaml.safe_load(f)
 
-    model_cfg = cfg["model"].copy()
     data_cfg = cfg["data"].copy()
 
-    # Build CNF from config
-    flow_config = model_cfg.pop("flow") if "flow" in model_cfg else {}
-    model_name = model_cfg.pop("name")
-    net = getattr(models, model_name)(**model_cfg)
-    flow = flow_matching.CNF(net, **flow_config)
+    # Build CNF or MeanFlow (model.flow.type) from config
+    flow = flow_matching.build_flow(cfg["model"])
 
     # Load weights
     ckpt = torch.load(model_path, map_location="cpu", weights_only=True)
-    flow.load_state_dict(ckpt["model"])
-    flow.eval()
+    if distill:
+        # Distilled() copies the teacher's network/buffers, then the student's own
+        # state dict overwrites them, so the teacher weights here are irrelevant.
+        student = flow_matching.Distilled(flow)
+        student.load_state_dict(ckpt["model"])
+        student.eval()
+        flow = _DistilledFlow(student)
+    else:
+        flow.load_state_dict(ckpt["model"])
+        flow.eval()
     flow = flow.to(torch.float32)
 
     # Re-fit transforms on training data (same split as training)
@@ -308,7 +340,9 @@ def main():
     start = time.time()
 
     if args.from_checkpoint:
-        sampler = load_from_checkpoint(args.model, args.config, steps=args.steps)
+        sampler = load_from_checkpoint(
+            args.model, args.config, steps=args.steps, distill=args.distill
+        )
         print(f"Model loaded in {(time.time() - start) * 1000.0:.1f}ms")
         use_compiled = False
     else:
