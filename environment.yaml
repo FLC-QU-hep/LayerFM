@@ -1,4 +1,4 @@
-name: PointCountFM
+name: LayerFM
 channels:
   - conda-forge
 dependencies:

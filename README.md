@@ -56,7 +56,7 @@ pip install --group dev
 **conda:**
 ```bash
 conda env create -f environment.yaml
-conda activate PointCountFM
+conda activate LayerFM
 pip install -e .
 ```
 All commands below are run from the repository root with the environment active.
