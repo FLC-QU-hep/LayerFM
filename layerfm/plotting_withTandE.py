@@ -8,7 +8,7 @@ import numpy as np
 import yaml
 from scipy.stats import binned_statistic
 
-# run this code: python pointcountfm/plotting_withTandE.py results/20260603_141325_LayerFM_PandT_multiLoss
+# run this code: python layerfm/plotting_withTandE.py results/20260603_141325_LayerFM_PandT_multiLoss
 
 parser = argparse.ArgumentParser()
 parser.add_argument("path", type=str, help="Path to the result folder.")
@@ -36,7 +36,7 @@ name = (
 subprocess.run(
     [
         "python",
-        "pointcountfm/inference_cond_file.py",
+        "layerfm/inference_cond_file.py",
         f"{path}{checkpoint}",
         "../pion-clouds/dataset/hdf5_HGx9new/all_interactions_pions_regular_ECAL+HCAL_10-90GeV_10.slcio.root_with_time.hdf5",
         "-o",
@@ -130,9 +130,10 @@ if g4_E0.shape[0] > gen_E0.shape[0]:
         g4_data_time = geant4_pl["min_time_per_layer"][idx]
     if "energy_per_layer" in geant4_pl:
         g4_data_energy = geant4_pl["energy_per_layer"][idx]
-elif gen_E0.shape[0] < g4_E0.shape[0]:
-    print(
-        "error: more Geant4 events than generated events, this should not happen for plotting"
+elif g4_E0.shape[0] < gen_E0.shape[0]:
+    raise ValueError(
+        f"more generated events ({gen_E0.shape[0]}) than Geant4 events "
+        f"({g4_E0.shape[0]}); cannot match them for plotting"
     )
 else:
     print("same amount of events in generated and Geant4, no need to select")

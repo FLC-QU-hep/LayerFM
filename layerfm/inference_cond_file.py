@@ -63,7 +63,8 @@ def parse_args(args: list[str] | None = None):
         "--config",
         type=str,
         default=None,
-        help="Path to config yaml. Only used with --from-checkpoint. "
+        help="Path to config yaml, used with --from-checkpoint and to read the "
+        "conditions of a non-showerdata input file. "
         "Defaults to conf.yaml in the model directory.",
     )
     parser.add_argument(
@@ -165,8 +166,8 @@ def load_from_checkpoint(
     distill: bool = False,
 ) -> _CheckpointSampler:
     """Rebuild a _CheckpointSampler from checkpoint.pt + conf.yaml."""
-    from pointcountfm import flow_matching
-    from pointcountfm.data_loader import get_loaders
+    from layerfm import flow_matching
+    from layerfm.data_loader import get_loaders
 
     config_dir = os.path.dirname(os.path.abspath(model_path))
     if config_path is None:
@@ -371,20 +372,30 @@ def main():
             dim=1,
         )
     else:
-        with open("config/config.yaml") as file:
+        # the run's own config, as in load_from_checkpoint
+        config_path = args.config or os.path.join(
+            os.path.dirname(os.path.abspath(args.model)), "conf.yaml"
+        )
+        with open(config_path) as file:
             config = yaml.safe_load(file)
         num_showers = f[list(f.keys())[0]].shape[0]
         cond_data = h5py.File(config["data"]["data_file"], "r")
-        use_labels = sampler.use_labels if not use_compiled else True
-        use_directions = sampler.use_directions if not use_compiled else True
+        use_labels = config["data"].get("use_labels", True)
+        use_directions = config["data"].get("use_directions", True)
         cond_parts = [
             torch.from_numpy(cond_data["energies"][:num_showers]).to(torch.float32)
         ]
         if use_labels and "labels" in cond_data:
+            # one-hot, as in data_loader.load_data_file
+            num_classes = (
+                config["data"].get("num_classes")
+                or int(cond_data["labels"][:].max()) + 1
+            )
             cond_parts.append(
-                torch.from_numpy(cond_data["labels"][:num_showers])
-                .unsqueeze(-1)
-                .to(torch.float32)
+                torch.nn.functional.one_hot(
+                    torch.from_numpy(cond_data["labels"][:num_showers]).long(),
+                    num_classes=num_classes,
+                ).to(torch.float32)
             )
         if use_directions and "directions" in cond_data:
             cond_parts.append(

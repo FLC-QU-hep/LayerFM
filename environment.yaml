@@ -1,4 +1,4 @@
-name: LayerFM
+name: layerfm
 channels:
   - conda-forge
 dependencies:

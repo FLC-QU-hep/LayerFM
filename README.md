@@ -2,7 +2,7 @@
 [![Python Version](https://img.shields.io/badge/Python_3.13-306998?logo=python&logoColor=white)](https://www.python.org/)
 [![PyTorch Version](https://img.shields.io/badge/PyTorch_2.8-ee4c2c?logo=pytorch&logoColor=white)](https://pytorch.org/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Hugging Face](https://img.shields.io/badge/%F0%9F%A4%97_weights-mmozzani%2FLayerFM-yellow)](https://huggingface.co/mmozzani/LayerFM)
+[![Hugging Face](https://img.shields.io/badge/%F0%9F%A4%97_weights-FLC--QU--hep%2FLayerFM-yellow)](https://huggingface.co/FLC-QU-hep/LayerFM)
 [![pre-commit](https://img.shields.io/github/actions/workflow/status/Mmozzanica5/LayerFM/pre_commit.yaml?label=pre-commit&logo=github)](https://github.com/Mmozzanica5/LayerFM/actions/workflows/pre_commit.yaml)
 [![Tests](https://img.shields.io/github/actions/workflow/status/Mmozzanica5/LayerFM/test.yaml?label=tests&logo=github)](https://github.com/Mmozzanica5/LayerFM/actions/workflows/test.yaml)
 
@@ -51,7 +51,7 @@ source .venv/bin/activate
 All commands below are run from the repository root with the environment active.
 
 ## Pretrained weights
-The trained models are on Hugging Face: [huggingface.co/mmozzani/LayerFM](https://huggingface.co/mmozzani/LayerFM).
+The trained models are on Hugging Face: [huggingface.co/FLC-QU-hep/LayerFM](https://huggingface.co/FLC-QU-hep/LayerFM).
 
 | Folder | Output per layer |
 |---|---|
@@ -79,7 +79,7 @@ The full chain is train, distill, generate. Every run writes to
 
 ### 1. Train the CNF
 ```bash
-python pointcountfm/trainer.py config/config_T.yaml
+python layerfm/trainer.py config/config_T.yaml
 ```
 `config/config_T.yaml` trains the points + time model; `config/config.yaml` trains the
 points-only model. Set `data.data_file` to your HDF5 file first.
@@ -97,7 +97,7 @@ The run directory then contains:
 **Resuming:** pass the run's own `conf.yaml`. It carries `result_path`, so training
 continues from `checkpoint.pt` instead of starting a new run:
 ```bash
-python pointcountfm/trainer.py results/<run>/conf.yaml
+python layerfm/trainer.py results/<run>/conf.yaml
 ```
 
 Trainer options:
@@ -111,7 +111,7 @@ Trainer options:
 
 ### 2. Distill to one step
 ```bash
-python pointcountfm/trainer.py results/<run>/conf.yaml --distill
+python layerfm/trainer.py results/<run>/conf.yaml --distill
 ```
 Distillation runs on a finished run and happens in two phases:
 1. **Teacher samples.** The CNF is integrated with 200 Heun steps on the full training +
@@ -141,7 +141,7 @@ with torch.no_grad():
 The number of points comes out as a float per layer; round it to the nearest integer
 and clip at 0 before use.
 
-`pointcountfm/inference_cond_file.py` is the generation script used by the validation
+`layerfm/inference_cond_file.py` is the generation script used by the validation
 plots (step 4). It loads a checkpoint (`--from-checkpoint`, plus `--distill` for the
 student or `--steps N` for the teacher), takes the incident energies of the first N
 showers of `data.data_file` in `config/config.yaml`, with N the length of the first
@@ -150,8 +150,8 @@ dataset in the given input file, and writes `num_points_per_layer` (and
 
 ### 4. Validation plots
 ```bash
-python pointcountfm/plotting_withTandE.py results/<run> --distill   # student
-python pointcountfm/plotting_withTandE.py results/<run> --steps 30  # teacher, 30 steps
+python layerfm/plotting_withTandE.py results/<run> --distill   # student
+python layerfm/plotting_withTandE.py results/<run> --steps 30  # teacher, 30 steps
 ```
 This generates 20 000 showers and writes to `results/<run>/plots/`: the total number of
 points, the number of points at 20, 50 and 80 GeV, the longitudinal profile with a

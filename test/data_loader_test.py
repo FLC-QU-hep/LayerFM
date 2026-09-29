@@ -4,8 +4,8 @@ import unittest
 import h5py
 import torch
 
-from pointcountfm.data_loader import DataLoader
-from pointcountfm.preprocessing import Identity
+from layerfm.data_loader import DataLoader
+from layerfm.preprocessing import Identity
 
 
 class TestDataLoader(unittest.TestCase):

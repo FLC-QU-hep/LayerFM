@@ -4,7 +4,7 @@ from collections.abc import Callable
 import torch
 from torch import Tensor, nn
 
-from pointcountfm import models
+from layerfm import models
 
 __all__ = ["CNF", "build_flow"]
 

@@ -27,6 +27,6 @@ jobs:
         run: |
           sed -i 's#data_file: .*#data_file: data/layer_level.h5#' config/config.yaml
       - name: Fast development run
-        run: python pointcountfm/trainer.py --time --fast-dev-run --device cpu config/config.yaml
+        run: python layerfm/trainer.py --time --fast-dev-run --device cpu config/config.yaml
       - name: Fast distillation run
-        run: python pointcountfm/trainer.py --fast-dev-run --distill --device cpu results/test/conf.yaml
+        run: python layerfm/trainer.py --fast-dev-run --distill --device cpu results/test/conf.yaml

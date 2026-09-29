@@ -6,7 +6,7 @@ import torch
 import torch.nn.functional as F
 from torch import Tensor
 
-from pointcountfm.preprocessing import Identity, Transformation, compose
+from layerfm.preprocessing import Identity, Transformation, compose
 
 
 def load_dataset(
@@ -121,7 +121,7 @@ def load_data_directory(
     e_incident = torch.cat(e_incident_list, dim=0)
     num_points = torch.cat(num_points_list, dim=0)
     mint = torch.cat(mint_list, dim=0) if mint_list else None
-    en_perl = torch.cat(en_perl, dim=0) if en_perl_list else None
+    en_perl = torch.cat(en_perl_list, dim=0) if en_perl_list else None
     noise = torch.cat(noise_list, dim=0) if load_noise else None
     labels = torch.cat(labels_list, dim=0)
     directions = torch.cat(directions_list, dim=0) if directions_list else None

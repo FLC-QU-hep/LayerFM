@@ -14,7 +14,7 @@ import numpy as np
 import torch
 from scipy.stats import norm
 
-from pointcountfm.preprocessing import compose
+from layerfm.preprocessing import compose
 
 # ── config ────────────────────────────────────────────────────────────────────
 DATA_FILE = "../pion-clouds/files/npy_array/points_HGx9new/input_for_pcFM.h5"

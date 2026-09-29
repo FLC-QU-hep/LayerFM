@@ -16,9 +16,9 @@ import torch.nn.functional as F
 import torch.optim as optim
 import yaml
 
-from pointcountfm import flow_matching
-from pointcountfm.data_loader import DataLoader, get_loaders
-from pointcountfm.preprocessing import Transformation
+from layerfm import flow_matching
+from layerfm.data_loader import DataLoader, get_loaders
+from layerfm.preprocessing import Transformation
 
 
 class Trainer:
