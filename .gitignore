@@ -2,7 +2,6 @@
 *.ipynb
 *.h5
 *.svg
-uv.lock
 
 data
 log
