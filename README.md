@@ -3,8 +3,8 @@
 [![PyTorch Version](https://img.shields.io/badge/PyTorch_2.8-ee4c2c?logo=pytorch&logoColor=white)](https://pytorch.org/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Hugging Face](https://img.shields.io/badge/%F0%9F%A4%97_weights-FLC--QU--hep%2FLayerFM-yellow)](https://huggingface.co/FLC-QU-hep/LayerFM)
-[![pre-commit](https://img.shields.io/github/actions/workflow/status/Mmozzanica5/LayerFM/pre_commit.yaml?label=pre-commit&logo=github)](https://github.com/Mmozzanica5/LayerFM/actions/workflows/pre_commit.yaml)
-[![Tests](https://img.shields.io/github/actions/workflow/status/Mmozzanica5/LayerFM/test.yaml?label=tests&logo=github)](https://github.com/Mmozzanica5/LayerFM/actions/workflows/test.yaml)
+[![pre-commit](https://img.shields.io/github/actions/workflow/status/FLC-QU-hep/LayerFM/pre_commit.yaml?label=pre-commit&logo=github)](https://github.com/FLC-QU-hep/LayerFM/actions/workflows/pre_commit.yaml)
+[![Tests](https://img.shields.io/github/actions/workflow/status/FLC-QU-hep/LayerFM/test.yaml?label=tests&logo=github)](https://github.com/FLC-QU-hep/LayerFM/actions/workflows/test.yaml)
 
 **Authors:** Martina Mozzanica, Thorsten Buss
 
