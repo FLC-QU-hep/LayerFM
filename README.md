@@ -55,8 +55,14 @@ The trained models are on Hugging Face: [huggingface.co/FLC-QU-hep/LayerFM](http
 
 | Folder | Output per layer |
 |---|---|
-| `points_time/` | number of points + minimum hit time |
-| `points_only/` | number of points |
+| `20260619_124529_LayerFM_PandT_/` | number of points + minimum hit time |
+| `20260619_192637_LayerFM_P/` | number of points |
+
+Each folder holds the teacher (`checkpoint.pt`), the distilled student
+(`checkpoint_distill.pt`), the configuration and `transforms.pt`, the input
+transformations fitted on the training data, so sampling with
+`load_from_checkpoint` does not need the training data. For a model you train yourself,
+`transforms.pt` is written next to the checkpoint the first time it is loaded.
 
 ## Data
 Training data is an HDF5 file with one row per shower:

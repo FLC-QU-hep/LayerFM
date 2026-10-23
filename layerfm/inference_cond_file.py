@@ -200,20 +200,34 @@ def load_from_checkpoint(
         flow.eval()
     flow = flow.to(torch.float32)
 
-    # Re-fit transforms on training data (same split as training)
-    print("Fitting transforms on training data...")
-    data_cfg["device"] = "cpu"
-    train_loader, _ = get_loaders(**data_cfg)
+    # The input transforms are fitted on the training data (same split as training).
+    # transforms.pt next to the checkpoint caches them, so sampling does not need the data.
+    transforms_path = os.path.join(config_dir, "transforms.pt")
+    if os.path.exists(transforms_path):
+        transforms = torch.load(transforms_path, map_location="cpu", weights_only=False)
+    else:
+        print("Fitting transforms on training data...")
+        data_cfg["device"] = "cpu"
+        train_loader, _ = get_loaders(**data_cfg)
+        transforms = {
+            name: getattr(train_loader, name)
+            for name in (
+                "transform_inc",
+                "transform_num_points",
+                "transform_min_time",
+                "transform_en_perl",
+            )
+        }
+        transforms["dim_data"] = train_loader.data.shape[1]
+        torch.save(transforms, transforms_path)
+        print(f"saved the fitted transforms to {transforms_path}")
 
     num_layers = data_cfg.get("num_layers", 78)
-    dim_data = train_loader.data.shape[1]
+    dim_data = transforms.pop("dim_data")
 
     return _CheckpointSampler(
         flow=flow,
-        transform_inc=train_loader.transform_inc,
-        transform_num_points=train_loader.transform_num_points,
-        transform_min_time=train_loader.transform_min_time,
-        transform_en_perl=train_loader.transform_en_perl,
+        **transforms,
         num_layers=num_layers,
         dim_data=dim_data,
         steps=steps,
