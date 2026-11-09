@@ -11,7 +11,8 @@
 LayerFM generates the **per-layer structure of a hadronic shower** in a highly granular
 calorimeter: for each of the 78 layers, the number of points (hits) and, optionally, the
 earliest hit time in that layer, conditioned on the incident energy. It is the first
-stage of a fast point-cloud shower generator, where these per-layer quantities fix how
+stage of [CaloCHILL](https://github.com/FLC-QU-hep/CaloCHILL) ([arXiv:2611.08606](https://arxiv.org/abs/2611.08606)),
+a fast point-cloud shower generator, where these per-layer quantities fix how
 many points the later stages produce and condition how they are placed.
 
 The model is a conditional flow-matching network (CNF) trained on Geant4 showers, which
@@ -216,7 +217,18 @@ python -m unittest discover -s test -p "*_test.py" -v
 ```
 
 ## Citation
-If you use LayerFM, please cite the works it builds on, CaloHadronic and PointCountFM / AllShowers:
+If you use LayerFM, please cite the CaloCHILL paper, where it is introduced, and the works it builds on, CaloHadronic and PointCountFM / AllShowers:
+```bibtex
+@article{Day-Hall:2026bmg,
+    author = {Day-Hall, Henry and Gaede, Frank and Kasieczka, Gregor and Kr{\"u}ger, Katja and Mozzanica, Martina},
+    title = "{Just CaloCHILL: fast hadronic shower generation in a learned latent space}",
+    eprint = "2611.08606",
+    archivePrefix = "arXiv",
+    primaryClass = "physics.ins-det",
+    month = "11",
+    year = "2026"
+}
+```
 ```bibtex
 @article{Buss:2025cyw,
     author  = {Buss, Thorsten and Gaede, Frank and Kasieczka, Gregor and Korol, Anatolii and Kr{\"u}ger, Katja and McKeown, Peter and Mozzanica, Martina},
